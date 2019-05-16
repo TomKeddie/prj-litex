@@ -1,0 +1,6 @@
+[submodule "arty/usb/hw/deps/valentyusb"]
+	path = arty/usb/hw/deps/valentyusb
+	url = https://github.com/im-tomu/valentyusb.git
+[submodule "arty/usb/hw/deps/usb"]
+	path = arty/usb/hw/deps/usb
+	url = https://github.com/pyusb/pyusb.git
