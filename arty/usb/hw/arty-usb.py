@@ -2,20 +2,41 @@
 
 import argparse
 
+# Import lxbuildenv to integrate the deps/ directory
+import lxbuildenv
+
 from migen import *
 
 from litex.boards.platforms import arty
 
 from litex.soc.cores.clock import *
+from litex.soc.cores import gpio
 from litex.soc.integration.soc_core import mem_decoder
 from litex.soc.integration.soc_sdram import *
 from litex.soc.integration.builder import *
+
+from litex.build.generic_platform import Pins, IOStandard, Misc, Subsignal
 
 from litedram.modules import MT41K128M16
 from litedram.phy import s7ddrphy
 
 from liteeth.phy.mii import LiteEthPHYMII
 from liteeth.core.mac import LiteEthMAC
+
+from valentyusb import usbcore
+from valentyusb.usbcore import io as usbio
+from valentyusb.usbcore.cpu import epmem, unififo, epfifo
+from valentyusb.usbcore.endpoint import EndpointType
+
+_usb_pmod = [
+    ("usb", 0,
+        Subsignal("d_p", Pins("pmoda:0")),
+        Subsignal("d_n", Pins("pmoda:1")),
+        Subsignal("pullup", Pins("pmoda:2")),
+        Subsignal("led", Pins("pmoda:3")),
+        IOStandard("LVCMOS33")
+    ),
+]
 
 # CRG ----------------------------------------------------------------------------------------------
 
@@ -25,12 +46,16 @@ class _CRG(Module):
         self.clock_domains.cd_sys4x = ClockDomain(reset_less=True)
         self.clock_domains.cd_sys4x_dqs = ClockDomain(reset_less=True)
         self.clock_domains.cd_clk200 = ClockDomain()
+        self.clock_domains.cd_usb_12 = ClockDomain()
+        self.clock_domains.cd_usb_48 = ClockDomain()
 
         # # #
 
         self.cd_sys.clk.attr.add("keep")
         self.cd_sys4x.clk.attr.add("keep")
         self.cd_sys4x_dqs.clk.attr.add("keep")
+        self.cd_usb_12.clk.attr.add("keep")
+        self.cd_usb_48.clk.attr.add("keep")
 
         self.submodules.pll = pll = S7PLL(speedgrade=-1)
         self.comb += pll.reset.eq(~platform.request("cpu_reset"))
@@ -39,6 +64,7 @@ class _CRG(Module):
         pll.create_clkout(self.cd_sys4x, 4*sys_clk_freq)
         pll.create_clkout(self.cd_sys4x_dqs, 4*sys_clk_freq, phase=90)
         pll.create_clkout(self.cd_clk200, 200e6)
+        pll.create_clkout(self.cd_usb_48, 48e6)
 
         self.submodules.idelayctrl = S7IDELAYCTRL(self.cd_clk200)
 
@@ -48,9 +74,41 @@ class _CRG(Module):
             Instance("BUFG", i_I=eth_clk, o_O=platform.request("eth_ref_clk")),
         ]
 
+        # use BUFR to derive 12MHz to avoid significant phase shift as ValentyUSB requires these clocks to be phase aligned
+        usb_12_bufr_clk = Signal()
+        self.specials += [
+            Instance("BUFR", p_BUFR_DIVIDE="4", i_CE=1, i_CLR=0, i_I=self.cd_usb_48.clk, o_O=usb_12_bufr_clk),
+            Instance("BUFG", i_I=usb_12_bufr_clk, o_O=self.cd_usb_12.clk),
+        ]
+
+# WarmBoot ------------------------------------------------------------------------------------------
+
+class WarmBoot(Module, AutoCSR):
+    def __init__(self):
+        self.ctrl = CSRStorage(size=8)
+        self.addr = CSRStorage(size=32)
+        do_reset = Signal()
+        self.comb += [
+            # "Reset Key" is 0xac (0b101011xx)
+            do_reset.eq(self.ctrl.storage[2] & self.ctrl.storage[3] & ~self.ctrl.storage[4]
+                      & self.ctrl.storage[5] & ~self.ctrl.storage[6] & self.ctrl.storage[7])
+        ]
+        do_reset.attr.add("keep")
+
+# ClassicLed ------------------------------------------------------------------------------------------
+
+class ClassicLed(gpio.GPIOOut):
+    def __init__(self, pads):
+        gpio.GPIOOut.__init__(self, pads)
+        
 # BaseSoC ------------------------------------------------------------------------------------------
 
 class BaseSoC(SoCSDRAM):
+    interrupt_map = {
+        "usb": 3,
+    }
+    interrupt_map.update(SoCSDRAM.interrupt_map)
+    
     def __init__(self, sys_clk_freq=int(100e6), **kwargs):
         platform = arty.Platform()
         SoCSDRAM.__init__(self, platform, clk_freq=sys_clk_freq,
@@ -67,6 +125,25 @@ class BaseSoC(SoCSDRAM):
         self.register_sdram(self.ddrphy,
                             sdram_module.geom_settings,
                             sdram_module.timing_settings)
+        # usb
+        platform.add_extension(_usb_pmod)
+        usb_pads = platform.request("usb")
+        usb_iobuf = usbio.IoBuf(usb_pads.d_p, usb_pads.d_n, usb_pads.pullup)
+        self.submodules.usb = epfifo.PerEndpointFifoInterface(usb_iobuf, debug=False)
+        self.add_csr("usb")
+
+        # usb led
+        self.submodules.usbled = ClassicLed(usb_pads.led)
+        self.add_csr("usbled")
+
+        # reboot
+        self.submodules.reboot = WarmBoot()
+        self.cpu.cpu_params.update(i_externalResetVector=self.reboot.addr.storage)
+        self.add_csr("reboot")
+
+        # debug
+        # self.register_mem("vexriscv_debug", 0xf00f0000, self.cpu_or_bridge.debug_bus, 0x10)
+
 
 # EthernetSoC --------------------------------------------------------------------------------------
 
