@@ -23,8 +23,11 @@ def main():
     led_pad = platform.request("user_led", 0)
     soc.submodules.leds = gpio.GPIOOut(led_pad)
     builder = Builder(soc)
-    builder.add_software_package("blink", src_dir="../../../../sw")
-    print(builder.software_packages)
+    builder.add_software_package("bios", src_dir="../../../../sw")
+    for package in builder.software_packages:
+        if package[0] == "bios":
+            builder.software_packages.remove(package)
+            break
     builder.build()
 
 
