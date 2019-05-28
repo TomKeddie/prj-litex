@@ -12,9 +12,11 @@ from litex.boards.platforms import arty
 
 from litex.soc.cores.clock import *
 from litex.soc.cores import gpio
+from litex.soc.cores import spi_flash
 from litex.soc.integration.soc_core import mem_decoder
 from litex.soc.integration.soc_sdram import *
 from litex.soc.integration.builder import *
+from litex.soc.interconnect import wishbone
 
 from litex.build.generic_platform import Pins, IOStandard, Misc, Subsignal
 
@@ -85,8 +87,12 @@ class _CRG(Module):
             Instance("BUFG", i_I=usb_12_bufr_clk, o_O=self.cd_usb_12.clk),
         ]
 
-# WarmBoot ------------------------------------------------------------------------------------------
+# RGBLED ------------------------------------------------------------------------------------------
+class RGBLED(gpio.GPIOOut):
+    def __init__(self, pads):
+        gpio.GPIOOut.__init__(self, pads)
 
+# WarmBoot ------------------------------------------------------------------------------------------
 class WarmBoot(Module, AutoCSR):
     def __init__(self):
         self.ctrl = CSRStorage(size=8)
@@ -99,28 +105,152 @@ class WarmBoot(Module, AutoCSR):
         ]
         do_reset.attr.add("keep")
 
-# ClassicLed ------------------------------------------------------------------------------------------
+# PicoRVSpi ----------------------------------------------------------------------------------------------
+class PicoRVSpi(Module, AutoCSR):
+    def __init__(self, platform, pads, size=2*1024*1024):
+        self.size = size
 
+        self.bus = bus = wishbone.Interface()
+
+        self.reset = Signal()
+
+        self.cfg1 = CSRStorage(size=8)
+        self.cfg2 = CSRStorage(size=8)
+        self.cfg3 = CSRStorage(size=8)
+        self.cfg4 = CSRStorage(size=8)
+
+        self.stat1 = CSRStatus(size=8)
+        self.stat2 = CSRStatus(size=8)
+        self.stat3 = CSRStatus(size=8)
+        self.stat4 = CSRStatus(size=8)
+
+        cfg = Signal(32)
+        cfg_we = Signal(4)
+        cfg_out = Signal(32)
+        self.comb += [
+            cfg.eq(Cat(self.cfg1.storage, self.cfg2.storage, self.cfg3.storage, self.cfg4.storage)),
+            cfg_we.eq(Cat(self.cfg1.re, self.cfg2.re, self.cfg3.re, self.cfg4.re)),
+            self.stat1.status.eq(cfg_out[0:8]),
+            self.stat2.status.eq(cfg_out[8:16]),
+            self.stat3.status.eq(cfg_out[16:24]),
+            self.stat4.status.eq(cfg_out[24:32]),
+        ]
+
+        mosi_pad = TSTriple()
+        miso_pad = TSTriple()
+        cs_n_pad = TSTriple()
+        clk_pad  = TSTriple()
+        wp_pad   = TSTriple()
+        hold_pad = TSTriple()
+        self.specials += mosi_pad.get_tristate(pads.mosi)
+        self.specials += miso_pad.get_tristate(pads.miso)
+        self.specials += cs_n_pad.get_tristate(pads.cs_n)
+        self.specials += clk_pad.get_tristate(pads.clk)
+        self.specials += wp_pad.get_tristate(pads.wp)
+        self.specials += hold_pad.get_tristate(pads.hold)
+
+        reset = Signal()
+        self.comb += [
+            reset.eq(ResetSignal() | self.reset),
+            cs_n_pad.oe.eq(~reset),
+            clk_pad.oe.eq(~reset),
+        ]
+
+        flash_addr = Signal(24)
+        mem_bits = bits_for(size)
+        self.comb += flash_addr.eq(bus.adr[0:mem_bits-2] << 2),
+
+        read_active = Signal()
+        spi_ready = Signal()
+        self.sync += [
+            If(bus.stb & bus.cyc & ~read_active,
+                read_active.eq(1),
+                bus.ack.eq(0),
+            )
+            .Elif(read_active & spi_ready,
+                read_active.eq(0),
+                bus.ack.eq(1),
+            )
+            .Else(
+                bus.ack.eq(0),
+                read_active.eq(0),
+            )
+        ]
+
+        o_rdata = Signal(32)
+        self.comb += bus.dat_r.eq(o_rdata)
+
+        self.specials += Instance("spimemio",
+            o_flash_io0_oe = mosi_pad.oe,
+            o_flash_io1_oe = miso_pad.oe,
+            o_flash_io2_oe = wp_pad.oe,
+            o_flash_io3_oe = hold_pad.oe,
+
+            o_flash_io0_do = mosi_pad.o,
+            o_flash_io1_do = miso_pad.o,
+            o_flash_io2_do = wp_pad.o,
+            o_flash_io3_do = hold_pad.o,
+            o_flash_csb    = cs_n_pad.o,
+            o_flash_clk    = clk_pad.o,
+
+            i_flash_io0_di = mosi_pad.i,
+            i_flash_io1_di = miso_pad.i,
+            i_flash_io2_di = wp_pad.i,
+            i_flash_io3_di = hold_pad.i,
+
+            i_resetn = ~reset,
+            i_clk = ClockSignal(),
+
+            i_valid = bus.stb & bus.cyc,
+            o_ready = spi_ready,
+            i_addr  = flash_addr,
+            o_rdata = o_rdata,
+
+	        i_cfgreg_we = cfg_we,
+            i_cfgreg_di = cfg,
+	        o_cfgreg_do = cfg_out,
+        )
+        platform.add_source("../foboot/hw/rtl/spimemio.v")
+
+# ClassicLed ------------------------------------------------------------------------------------------
 class ClassicLed(gpio.GPIOOut):
     def __init__(self, pads):
         gpio.GPIOOut.__init__(self, pads)
         
 # BaseSoC ------------------------------------------------------------------------------------------
-
 class BaseSoC(SoCSDRAM):
+    soc_interrupt_map = {
+        "usb":    3,
+    }
+    soc_interrupt_map.update(SoCSDRAM.soc_interrupt_map)
+    csr_map = {
+        "ddrphy":       20,
+        "usb":          21,
+        "usbled":       22,
+        "reboot":       23,
+        "picorvspi":    24,
+        "rgb":          25,
+    }
+    csr_map.update(SoCSDRAM.csr_map)
+    mem_map = {
+        "spiflash": 0x20000000,  # (default shadow @0xa0000000)
+    }
+    mem_map.update(SoCSDRAM.mem_map)
+
     def __init__(self, sys_clk_freq=int(100e6), **kwargs):
         platform = arty.Platform()
         SoCSDRAM.__init__(self, platform, clk_freq=sys_clk_freq,
                           integrated_rom_size=0x8000,
                           integrated_sram_size=0x8000,
-                          cpu_variant="standard+debug",
+                          cpu_type = "vexriscv",
+                          cpu_variant = "std_debug",
                           **kwargs)
 
         self.submodules.crg = _CRG(platform, sys_clk_freq)
 
         # sdram
         self.submodules.ddrphy = s7ddrphy.A7DDRPHY(platform.request("ddram"), sys_clk_freq=sys_clk_freq)
-        self.add_csr("ddrphy")
+#        self.add_csr("ddrphy")
         sdram_module = MT41K128M16(sys_clk_freq, "1:4")
         self.register_sdram(self.ddrphy,
                             sdram_module.geom_settings,
@@ -130,17 +260,25 @@ class BaseSoC(SoCSDRAM):
         usb_pads = platform.request("usb")
         usb_iobuf = usbio.IoBuf(usb_pads.d_p, usb_pads.d_n, usb_pads.pullup)
         self.submodules.usb = epfifo.PerEndpointFifoInterface(usb_iobuf, debug=False)
-        self.add_csr("usb")
-        self.add_interrupt("usb", 3)
+#        self.add_csr("usb")
         
         # usb led
         self.submodules.usbled = ClassicLed(usb_pads.led)
-        self.add_csr("usbled")
+#        self.add_csr("usbled")
+
+        # spi flash
+        spi_pads = platform.request("spiflash")
+        self.submodules.picorvspi = PicoRVSpi(platform, spi_pads)
+        self.register_mem("spiflash", self.mem_map["spiflash"],
+            self.picorvspi.bus, size=self.picorvspi.size)
+
+        # RGB leds
+        self.submodules.rgb = RGBLED(platform.request("rgb_led", 0))
 
         # reboot
         self.submodules.reboot = WarmBoot()
         self.cpu.cpu_params.update(i_externalResetVector=self.reboot.addr.storage)
-        self.add_csr("reboot")
+#        self.add_csr("reboot")
         
 
 # EthernetSoC --------------------------------------------------------------------------------------
@@ -150,19 +288,28 @@ class EthernetSoC(BaseSoC):
         "ethmac": 0x30000000,  # (shadow @0xb0000000)
     }
     mem_map.update(BaseSoC.mem_map)
+    soc_interrupt_map = {
+        "ethmac":    4,
+    }
+    soc_interrupt_map.update(BaseSoC.soc_interrupt_map)
+    csr_map = {
+        "ethphy":         30,
+        "ethmac":         31,
+    }
+    csr_map.update(BaseSoC.csr_map)
 
     def __init__(self, **kwargs):
         BaseSoC.__init__(self, **kwargs)
 
         self.submodules.ethphy = LiteEthPHYMII(self.platform.request("eth_clocks"),
                                                self.platform.request("eth"))
-        self.add_csr("ethphy")
+#        self.add_csr("ethphy")
         self.submodules.ethmac = LiteEthMAC(phy=self.ethphy, dw=32,
                                             interface="wishbone", endianness=self.cpu.endianness)
         self.add_wb_slave(mem_decoder(self.mem_map["ethmac"]), self.ethmac.bus)
         self.add_memory_region("ethmac", self.mem_map["ethmac"] | self.shadow_base, 0x2000)
-        self.add_csr("ethmac")
-        self.add_interrupt("ethmac")
+#        self.add_csr("ethmac")
+#        self.add_interrupt("ethmac")
 
         self.ethphy.crg.cd_eth_rx.clk.attr.add("keep")
         self.ethphy.crg.cd_eth_tx.clk.attr.add("keep")
@@ -176,6 +323,10 @@ class EthernetSoC(BaseSoC):
 # EtherboneSoC --------------------------------------------------------------------------------------
 # debug (see https://github.com/timvideos/litex-buildenv/wiki/Debugging)
 class EtherboneSoC(BaseSoC):
+    csr_map = {
+        "ethphy":         30,
+    }
+    csr_map.update(BaseSoC.csr_map)
     def __init__(self,
                  mac_address=0x10e2d5000000,
                  ip_address="192.168.1.50",
@@ -185,7 +336,7 @@ class EtherboneSoC(BaseSoC):
         # Ethernet PHY and UDP/IP stack
         self.submodules.ethphy = LiteEthPHYMII(self.platform.request("eth_clocks"),
                                                self.platform.request("eth"))
-        self.add_csr("ethphy")
+#        self.add_csr("ethphy")
         self.submodules.ethcore = LiteEthUDPIPCore(self.ethphy,
                                                    mac_address,
                                                    common.convert_ip(ip_address),
@@ -226,6 +377,11 @@ def main():
     cls = EthernetSoC if args.with_ethernet else BaseSoC if args.without_debug else EtherboneSoC
     soc = cls(**soc_sdram_argdict(args))
     builder = Builder(soc, **builder_argdict(args))
+    for package in builder.software_packages:
+       if package[0] == "bios":
+           builder.software_packages.remove(package)
+           break
+    builder.add_software_package("bios", src_dir="../../../../sw")
     builder.build()
 
 
