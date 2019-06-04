@@ -4,3 +4,6 @@
 [submodule "arty/usb/hw/deps/usb"]
 	path = arty/usb/hw/deps/usb
 	url = https://github.com/pyusb/pyusb.git
+[submodule "arty/usb/sw/foboot"]
+	path = arty/usb/foboot
+	url = https://github.com/im-tomu/foboot.git

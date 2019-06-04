@@ -21,6 +21,8 @@ void isr(void)
 	
 	if(irqs & (1 << UART_INTERRUPT))
 		uart_isr();
+    if (irqs & (1 << USB_INTERRUPT))
+        usb_isr();
 }
 
 void msleep(int ms) {
@@ -183,6 +185,7 @@ int main(int argc, char **argv)
 
  	puts("USB booting...\n");
 
+    puts("-1\n");
     usb_connect();
     puts("0\n");
 
