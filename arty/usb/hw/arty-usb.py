@@ -279,7 +279,12 @@ class BaseSoC(SoCSDRAM):
         self.submodules.reboot = WarmBoot()
         self.cpu.cpu_params.update(i_externalResetVector=self.reboot.addr.storage)
 #        self.add_csr("reboot")
-        
+
+        # config memory confiig for xdc
+        platform.add_platform_command("set_property CFGBVS VCCO [current_design]")
+        platform.add_platform_command("set_property CONFIG_VOLTAGE 3.3 [current_design]")
+        platform.add_platform_command("set_property BITSTREAM.GENERAL.COMPRESS True [current_design]")
+
 
 # EthernetSoC --------------------------------------------------------------------------------------
 
@@ -383,6 +388,7 @@ def main():
            break
     builder.add_software_package("bios", src_dir="../../../../sw")
     builder.build()
+
 
 
 if __name__ == "__main__":
