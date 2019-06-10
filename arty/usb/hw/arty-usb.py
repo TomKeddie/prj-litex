@@ -136,12 +136,13 @@ class PicoRVSpi(Module, AutoCSR):
         mosi_pad = TSTriple()
         miso_pad = TSTriple()
         cs_n_pad = TSTriple()
-        sck = Signal()
+        clk_pad  = TSTriple()
         wp_pad   = TSTriple()
         hold_pad = TSTriple()
         self.specials += mosi_pad.get_tristate(pads.mosi)
         self.specials += miso_pad.get_tristate(pads.miso)
         self.specials += cs_n_pad.get_tristate(pads.cs_n)
+        self.specials += clk_pad.get_tristate(pads.clk)
         self.specials += wp_pad.get_tristate(pads.wp)
         self.specials += hold_pad.get_tristate(pads.hold)
 
@@ -153,8 +154,8 @@ class PicoRVSpi(Module, AutoCSR):
                      i_GTS=0,
                      i_KEYCLEARB=1,
                      i_PACK=0,
-                     i_USRCCLKO=sck,
-                     i_USRCCLKTS=0,
+                     i_USRCCLKO=0,
+                     i_USRCCLKTS=1,
                      i_USRDONEO=1,
                      i_USRDONETS=0),
             ]
@@ -163,6 +164,7 @@ class PicoRVSpi(Module, AutoCSR):
         self.comb += [
             reset.eq(ResetSignal() | self.reset),
             cs_n_pad.oe.eq(~reset),
+            clk_pad.oe.eq(~reset),
         ]
 
         flash_addr = Signal(24)
@@ -200,7 +202,7 @@ class PicoRVSpi(Module, AutoCSR):
             o_flash_io2_do = wp_pad.o,
             o_flash_io3_do = hold_pad.o,
             o_flash_csb    = cs_n_pad.o,
-            o_flash_clk    = sck,
+            o_flash_clk    = clk_pad.o,
 
             i_flash_io0_di = mosi_pad.i,
             i_flash_io1_di = miso_pad.i,
