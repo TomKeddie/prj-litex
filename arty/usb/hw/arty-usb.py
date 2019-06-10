@@ -34,6 +34,8 @@ from valentyusb.usbcore import io as usbio
 from valentyusb.usbcore.cpu import epmem, unififo, epfifo
 from valentyusb.usbcore.endpoint import EndpointType
 
+from litescope import LiteScopeIO, LiteScopeAnalyzer
+
 _usb_pmod = [
     ("usb", 0,
      Subsignal("d_p", Pins("pmoda:0")),
@@ -87,11 +89,6 @@ class _CRG(Module):
             Instance("BUFG", i_I=usb_12_bufr_clk, o_O=self.cd_usb_12.clk),
         ]
 
-# RGBLED ------------------------------------------------------------------------------------------
-class RGBLED(gpio.GPIOOut):
-    def __init__(self, pads):
-        gpio.GPIOOut.__init__(self, pads)
-
 # WarmBoot ------------------------------------------------------------------------------------------
 class WarmBoot(Module, AutoCSR):
     def __init__(self):
@@ -139,21 +136,33 @@ class PicoRVSpi(Module, AutoCSR):
         mosi_pad = TSTriple()
         miso_pad = TSTriple()
         cs_n_pad = TSTriple()
-        clk_pad  = TSTriple()
+        sck = Signal()
         wp_pad   = TSTriple()
         hold_pad = TSTriple()
         self.specials += mosi_pad.get_tristate(pads.mosi)
         self.specials += miso_pad.get_tristate(pads.miso)
         self.specials += cs_n_pad.get_tristate(pads.cs_n)
-        self.specials += clk_pad.get_tristate(pads.clk)
         self.specials += wp_pad.get_tristate(pads.wp)
         self.specials += hold_pad.get_tristate(pads.hold)
+
+        # STARTUP
+        self.specials += [
+            Instance("STARTUPE2",
+                     i_CLK=0,
+                     i_GSR=0,
+                     i_GTS=0,
+                     i_KEYCLEARB=1,
+                     i_PACK=0,
+                     i_USRCCLKO=sck,
+                     i_USRCCLKTS=0,
+                     i_USRDONEO=1,
+                     i_USRDONETS=0),
+            ]
 
         reset = Signal()
         self.comb += [
             reset.eq(ResetSignal() | self.reset),
             cs_n_pad.oe.eq(~reset),
-            clk_pad.oe.eq(~reset),
         ]
 
         flash_addr = Signal(24)
@@ -191,7 +200,7 @@ class PicoRVSpi(Module, AutoCSR):
             o_flash_io2_do = wp_pad.o,
             o_flash_io3_do = hold_pad.o,
             o_flash_csb    = cs_n_pad.o,
-            o_flash_clk    = clk_pad.o,
+            o_flash_clk    = sck,
 
             i_flash_io0_di = mosi_pad.i,
             i_flash_io1_di = miso_pad.i,
@@ -206,17 +215,12 @@ class PicoRVSpi(Module, AutoCSR):
             i_addr  = flash_addr,
             o_rdata = o_rdata,
 
-	        i_cfgreg_we = cfg_we,
+            i_cfgreg_we = cfg_we,
             i_cfgreg_di = cfg,
-	        o_cfgreg_do = cfg_out,
+            o_cfgreg_do = cfg_out,
         )
-        platform.add_source("../foboot/hw/rtl/spimemio.v")
+        platform.add_source("../picorv32/picosoc/spimemio.v")
 
-# ClassicLed ------------------------------------------------------------------------------------------
-class ClassicLed(gpio.GPIOOut):
-    def __init__(self, pads):
-        gpio.GPIOOut.__init__(self, pads)
-        
 # BaseSoC ------------------------------------------------------------------------------------------
 class BaseSoC(SoCSDRAM):
     soc_interrupt_map = {
@@ -230,6 +234,9 @@ class BaseSoC(SoCSDRAM):
         "reboot":       23,
         "picorvspi":    24,
         "rgb":          25,
+        "io":           26,
+        "analyzer":     27,
+        "debugreg":     28,
     }
     csr_map.update(SoCSDRAM.csr_map)
     mem_map = {
@@ -263,7 +270,7 @@ class BaseSoC(SoCSDRAM):
 #        self.add_csr("usb")
         
         # usb led
-        self.submodules.usbled = ClassicLed(usb_pads.led)
+        self.submodules.usbled = gpio.GPIOOut(usb_pads.led)
 #        self.add_csr("usbled")
 
         # spi flash
@@ -273,18 +280,74 @@ class BaseSoC(SoCSDRAM):
             self.picorvspi.bus, size=self.picorvspi.size)
 
         # RGB leds
-        self.submodules.rgb = RGBLED(platform.request("rgb_led", 0))
+        self.submodules.rgb = gpio.GPIOOut(platform.request("rgb_led", 0))
+
+        # debug
+        debugreg = Signal(16)
+        self.submodules.debugreg = gpio.GPIOOut(debugreg)
+            
+        # reset button
+        self.comb += self.cpu.reset.eq(platform.request("user_btn", 0) | self.ctrl.reset)
 
         # reboot
         self.submodules.reboot = WarmBoot()
         self.cpu.cpu_params.update(i_externalResetVector=self.reboot.addr.storage)
 #        self.add_csr("reboot")
 
-        # config memory confiig for xdc
+        # config memory settings for xdc
         platform.add_platform_command("set_property CFGBVS VCCO [current_design]")
         platform.add_platform_command("set_property CONFIG_VOLTAGE 3.3 [current_design]")
         platform.add_platform_command("set_property BITSTREAM.GENERAL.COMPRESS True [current_design]")
+        platform.add_platform_command("set_property BITSTREAM.CONFIG.CONFIGRATE 40 [current_design]")
+        platform.add_platform_command("set_property BITSTREAM.CONFIG.SPI_BUSWIDTH 4 [current_design]")
+        platform.add_platform_command("set_property CONFIG_MODE SPIx4 [current_design]")
 
+        # Tell the s/w where to put the user image.  N25Q128 is 128-Mbit or
+        # 16Mbyte, leave 2Mbyte for bootloader image (could be smaller)
+        self.config["RESCUE_IMAGE_OFFSET"] = 0x200000
+
+        # Litescope IO
+        self.submodules.io = LiteScopeIO(8)
+
+        # analyzer
+        analyzer_groups = {}
+        miso = Signal(name_override="miso")
+        mosi = Signal(name_override="mosi")
+        sck = Signal(name_override="sck")
+        cs_n = Signal(name_override="cs_n")
+        wp   = Signal(name_override="wp")
+        hold = Signal(name_override="hold")
+        self.comb += miso.eq(spi_pads.miso);
+        self.comb += mosi.eq(spi_pads.mosi);
+        self.comb += sck.eq(spi_pads.clk);
+        self.comb += cs_n.eq(spi_pads.cs_n);
+        self.comb += wp.eq(spi_pads.wp);
+        self.comb += hold.eq(spi_pads.hold);
+        analyzer_groups[0] = [
+            miso,
+            mosi,
+            sck,
+            cs_n,
+            wp,
+            hold,
+        ]
+        self.submodules.analyzer = LiteScopeAnalyzer(analyzer_groups, 512)
+
+        # ila
+        platform.add_source("ila_0/ila_0.xci")
+        probe0 = Signal(6)
+        probe1 = Signal(16)
+        self.comb += probe0.eq(Cat(spi_pads.clk, spi_pads.cs_n, spi_pads.wp, spi_pads.hold, spi_pads.miso, spi_pads.mosi))
+        self.comb += probe1.eq(debugreg)
+        self.specials += [
+            Instance("ila_0", i_clk=self.crg.cd_sys.clk, i_probe0=probe0, i_probe1=probe1),
+            ]
+        platform.toolchain.additional_commands +=  [
+            "write_debug_probes -force {build_name}.ltx",
+        ]
+
+    def do_exit(self, vns):
+        self.analyzer.export_csv(vns, "test/analyzer.csv")
 
 # EthernetSoC --------------------------------------------------------------------------------------
 
