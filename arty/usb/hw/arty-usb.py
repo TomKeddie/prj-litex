@@ -91,16 +91,118 @@ class _CRG(Module):
 
 # WarmBoot ------------------------------------------------------------------------------------------
 class WarmBoot(Module, AutoCSR):
-    def __init__(self):
+    def __init__(self, parent):
         self.ctrl = CSRStorage(size=8)
         self.addr = CSRStorage(size=32)
-        do_reset = Signal()
+        boot = Signal()
         self.comb += [
             # "Reset Key" is 0xac (0b101011xx)
-            do_reset.eq(self.ctrl.storage[2] & self.ctrl.storage[3] & ~self.ctrl.storage[4]
+            boot.eq(self.ctrl.storage[2] & self.ctrl.storage[3] & ~self.ctrl.storage[4]
                         & self.ctrl.storage[5] & ~self.ctrl.storage[6] & self.ctrl.storage[7])
         ]
-        do_reset.attr.add("keep")
+        addr = Signal(32)
+        self.comb += addr.eq(parent.config["RESCUE_IMAGE_OFFSET"] * (self.ctrl.storage[1] * 2 + self.ctrl.storage[0]))
+
+        c_dummy_word = Constant(0xFFFFFFFF)  # Dummy Word
+        c_sync_word = Constant(0xAA995566)   # Sync Word
+        c_noop_word = Constant(0x20000000)   # Type 1 NO OP
+        c_wbstar_word = Constant(0x30020001) # Type 1 Write 1 Words to WBSTAR
+        c_cmd_word = Constant(0x30008001)    # Type 1 Write 1 Words to CMD
+        c_iprog_word = Constant(0x0000000F)  # IPROG Command
+
+        c_addr = Constant(0x200000)
+
+        clk = ClockSignal()
+        reset = ResetSignal()
+        boot_1d = Signal()
+        icape2_input = Signal()
+        icape2_input_swapped = Signal(32)
+        icape2_cs = Signal()
+        icape2_wr = Signal()
+
+        self.sync += boot_1d.eq(boot)
+
+        fsm = FSM(reset_state="IDLE")
+        self.submodules += fsm
+        # start on rising edge of boot
+        fsm.act("IDLE",
+                If(boot & ~boot_1d, NextState("DUMMY")))
+        fsm.act("DUMMY",
+                icape2_input.eq(c_dummy_word),
+                icape2_wr.eq(1),
+                icape2_cs.eq(1),
+                NextState("SYNC"))
+        fsm.act("SYNC",
+                icape2_input.eq(c_sync_word),
+                icape2_wr.eq(1),
+                icape2_cs.eq(1),
+                NextState("NOOP1"))
+        fsm.act("NOOP1",
+                icape2_input.eq(c_noop_word),
+                icape2_wr.eq(1),
+                icape2_cs.eq(1),
+                NextState("WBSTAR"))
+        fsm.act("WBSTAR",
+                icape2_input.eq(c_wbstar_word),
+                icape2_wr.eq(1),
+                icape2_cs.eq(1),
+                NextState("ADDRESS"))
+        # When using ICAPE2 to set the WBSTAR address,
+        # the 24 most significant address bits should be
+        # written to WBSTAR[23:0]. For SPI 32-bit
+        # addressing mode, WBSTAR[23:0] are sent as
+        # address bits [31:8]. The lower 8 bits of the
+        # address are undefined and the value could be
+        # as high as 0xFF. Any bitstream at the WBSTAR
+        # address should contain 256 dummy bytes before
+        # the start of the bitstream..
+        fsm.act("ADDRESS",
+                icape2_input.eq(Cat(0, c_addr[8:31])),
+                icape2_wr.eq(1),
+                icape2_cs.eq(1),
+                NextState("CMD"))
+        fsm.act("CMD",
+                icape2_input.eq(c_cmd_word),
+                icape2_wr.eq(1),
+                icape2_cs.eq(1),
+                NextState("IPROG"))
+        fsm.act("IPROG",
+                icape2_input.eq(c_iprog_word),
+                icape2_wr.eq(1),
+                icape2_cs.eq(1),
+                NextState("NOOP2"))
+        fsm.act("NOOP2",
+                icape2_input.eq(c_noop_word),
+                icape2_wr.eq(1),
+                icape2_cs.eq(1),
+                NextState("DONE"))
+        fsm.act("DONE",
+                icape2_wr.eq(0),
+                icape2_cs.eq(0),
+                NextState("DONE"))
+
+        icape2_cs_1d = Signal()
+        icape2_wr_1d = Signal()
+        self.sync += icape2_cs_1d.eq(icape2_cs)
+        self.sync += icape2_wr_1d.eq(icape2_wr)
+
+        icape2_csib = Signal()
+        icape2_rdwrb = Signal()
+        # TODO, need logic inversion here
+        self.comb += icape2_csib.eq(~icape2_cs_1d)
+        self.comb += icape2_rdwrb.eq(~icape2_wr_1d)
+        
+        icape2_output = Signal(32)
+        self.specials += [
+            Instance("ICAPE2",
+                     p_ICAP_WIDTH="X32",          # Specifies the input and output data width.
+                     o_O = icape2_output,         # 32-bit output: Configuration data output bus
+                     i_CLK = clk,                 # 1-bit input: Clock Input
+                     i_CSIB = icape2_csib,     # 1-bit input: Active-Low ICAP Enable
+                     i_I = icape2_input_swapped,  # 32-bit input: Configuration data input bus
+                     i_RDWRB = icape2_rdwrb,   # 1-bit input: Read/Write Select input
+            )
+        ]
 
 # PicoRVSpi ----------------------------------------------------------------------------------------------
 class PicoRVSpi(Module, AutoCSR):
@@ -145,20 +247,6 @@ class PicoRVSpi(Module, AutoCSR):
         self.specials += clk_pad.get_tristate(pads.clk)
         self.specials += wp_pad.get_tristate(pads.wp)
         self.specials += hold_pad.get_tristate(pads.hold)
-
-        # STARTUP
-        self.specials += [
-            Instance("STARTUPE2",
-                     i_CLK=0,
-                     i_GSR=0,
-                     i_GTS=0,
-                     i_KEYCLEARB=1,
-                     i_PACK=0,
-                     i_USRCCLKO=0,
-                     i_USRCCLKTS=1,
-                     i_USRDONEO=1,
-                     i_USRDONETS=0),
-            ]
 
         reset = Signal()
         self.comb += [
@@ -257,6 +345,11 @@ class BaseSoC(SoCSDRAM):
 
         self.submodules.crg = _CRG(platform, sys_clk_freq)
 
+        # Tell the s/w where to put the user image.  N25Q128 is 128-Mbit or
+        # 16Mbyte, leave 2Mbyte for bootloader image (could be smaller)
+        # -rw-r--r-- 1 tom tom  2192012 Jun 16 16:33 top.bin
+        self.config["RESCUE_IMAGE_OFFSET"] = 0x200000
+
         # sdram
         self.submodules.ddrphy = s7ddrphy.A7DDRPHY(platform.request("ddram"), sys_clk_freq=sys_clk_freq)
 #        self.add_csr("ddrphy")
@@ -292,8 +385,7 @@ class BaseSoC(SoCSDRAM):
         self.comb += self.cpu.reset.eq(platform.request("user_btn", 0) | self.ctrl.reset)
 
         # reboot
-        self.submodules.reboot = WarmBoot()
-        self.cpu.cpu_params.update(i_externalResetVector=self.reboot.addr.storage)
+        self.submodules.reboot = WarmBoot(self)
 #        self.add_csr("reboot")
 
         # config memory settings for xdc
@@ -303,10 +395,6 @@ class BaseSoC(SoCSDRAM):
         platform.add_platform_command("set_property BITSTREAM.CONFIG.CONFIGRATE 40 [current_design]")
         platform.add_platform_command("set_property BITSTREAM.CONFIG.SPI_BUSWIDTH 4 [current_design]")
         platform.add_platform_command("set_property CONFIG_MODE SPIx4 [current_design]")
-
-        # Tell the s/w where to put the user image.  N25Q128 is 128-Mbit or
-        # 16Mbyte, leave 2Mbyte for bootloader image (could be smaller)
-        self.config["RESCUE_IMAGE_OFFSET"] = 0x200000
 
         # Litescope IO
         self.submodules.io = LiteScopeIO(8)
@@ -319,12 +407,12 @@ class BaseSoC(SoCSDRAM):
         cs_n = Signal(name_override="cs_n")
         wp   = Signal(name_override="wp")
         hold = Signal(name_override="hold")
-        self.comb += miso.eq(spi_pads.miso);
-        self.comb += mosi.eq(spi_pads.mosi);
-        self.comb += sck.eq(spi_pads.clk);
-        self.comb += cs_n.eq(spi_pads.cs_n);
-        self.comb += wp.eq(spi_pads.wp);
-        self.comb += hold.eq(spi_pads.hold);
+        self.comb += miso.eq(spi_pads.miso)
+        self.comb += mosi.eq(spi_pads.mosi)
+        self.comb += sck.eq(spi_pads.clk)
+        self.comb += cs_n.eq(spi_pads.cs_n)
+        self.comb += wp.eq(spi_pads.wp)
+        self.comb += hold.eq(spi_pads.hold)
         analyzer_groups[0] = [
             miso,
             mosi,
