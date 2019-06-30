@@ -2,9 +2,10 @@
 
 import argparse
 import pprint
+import os
+import sys
 
-# Import lxbuildenv to integrate the deps/ directory
-import lxbuildenv
+sys.path.append(os.path.dirname(os.path.realpath(__file__)) + "/../foboot/hw/deps/valentyusb")
 
 from migen import *
 
@@ -115,7 +116,7 @@ class WarmBoot(Module, AutoCSR):
         clk = ClockSignal()
         reset = ResetSignal()
         boot_1d = Signal()
-        icape2_input = Signal()
+        icape2_input = Signal(32)
         icape2_input_swapped = Signal(32)
         icape2_cs = Signal()
         icape2_wr = Signal()
@@ -147,7 +148,7 @@ class WarmBoot(Module, AutoCSR):
                 icape2_wr.eq(1),
                 icape2_cs.eq(1),
                 NextState("ADDRESS"))
-        # When using ICAPE2 to set the WBSTAR address,
+        # UG470 "When using ICAPE2 to set the WBSTAR address,
         # the 24 most significant address bits should be
         # written to WBSTAR[23:0]. For SPI 32-bit
         # addressing mode, WBSTAR[23:0] are sent as
@@ -155,7 +156,7 @@ class WarmBoot(Module, AutoCSR):
         # address are undefined and the value could be
         # as high as 0xFF. Any bitstream at the WBSTAR
         # address should contain 256 dummy bytes before
-        # the start of the bitstream..
+        # the start of the bitstream."
         fsm.act("ADDRESS",
                 icape2_input.eq(Cat(0, c_addr[8:31])),
                 icape2_wr.eq(1),
@@ -188,9 +189,21 @@ class WarmBoot(Module, AutoCSR):
 
         icape2_csib = Signal()
         icape2_rdwrb = Signal()
-        # TODO, need logic inversion here
         self.comb += icape2_csib.eq(~icape2_cs_1d)
         self.comb += icape2_rdwrb.eq(~icape2_wr_1d)
+
+        # UG470 : "Traditionally, in SelectMAP x8 mode, configuration data is loaded one byte per CCLK,
+        # with the most-significant bit (MSB) of each byte presented to the D0 pin. Although this convention
+        # (D0 = MSB, D7 = LSB) differs from many other devices, it is consistent across all Xilinx FPGAs.
+        # The bit-swap rule also applies to 7 series FPGA BPI x8 modes and to the ICAPE2 interface (see
+        # Bit Swapping). In 7 series devices, the bit-swap rule is extended to x16 and x32 bus widths,
+        # i.e., the data is bit swapped within each byte. The bit order in 7 series FPGAs is the same as
+        # in Virtex-6 FPGAs."
+        for iy in range(8):
+            self.sync += icape2_input_swapped[iy   ].eq(icape2_input[7-iy])
+            self.sync += icape2_input_swapped[iy+ 8].eq(icape2_input[15-iy])
+            self.sync += icape2_input_swapped[iy+16].eq(icape2_input[23-iy])
+            self.sync += icape2_input_swapped[iy+24].eq(icape2_input[31-iy])
         
         icape2_output = Signal(32)
         self.specials += [
@@ -361,7 +374,8 @@ class BaseSoC(SoCSDRAM):
         platform.add_extension(_usb_pmod)
         usb_pads = platform.request("usb")
         usb_iobuf = usbio.IoBuf(usb_pads.d_p, usb_pads.d_n, usb_pads.pullup)
-        self.submodules.usb = epfifo.PerEndpointFifoInterface(usb_iobuf, debug=False)
+        self.submodules.usb = epfifo.PerEndpointFifoInterface(usb_iobuf, debug=True)
+        self.add_wb_master(self.usb.debug_bridge.wishbone)
 #        self.add_csr("usb")
         
         # usb led
@@ -375,7 +389,8 @@ class BaseSoC(SoCSDRAM):
             self.picorvspi.bus, size=self.picorvspi.size)
 
         # RGB leds
-        self.submodules.rgb = gpio.GPIOOut(platform.request("rgb_led", 0))
+        rgbled = platform.request("rgb_led", 0)
+        self.submodules.rgb = gpio.GPIOOut(Cat(rgbled.r, rgbled.g, rgbled.b))
 
         # debug
         debugreg = Signal(16)
@@ -522,15 +537,16 @@ class EtherboneSoC(BaseSoC):
 # Build --------------------------------------------------------------------------------------------
 
 def main():
-    parser = argparse.ArgumentParser(description="LiteX SoC on Arty")
+    parser = argparse.ArgumentParser(description="LiteX SoC on Arty", conflict_handler="resolve")
     builder_args(parser)
     soc_sdram_args(parser)
     parser.add_argument("--with-ethernet", action="store_true",
                         help="enable Ethernet support")
     parser.add_argument("--without-debug", action="store_true",
-                        help="disable Ethernet debugx support")
+                        help="disable Ethernet debug support")
+    parser.add_argument("--csr-csv", action="store_true", default="csr.csv",
+                        help="csv filename")
     args = parser.parse_args()
-
     
     cls = EthernetSoC if args.with_ethernet else BaseSoC if args.without_debug else EtherboneSoC
     soc = cls(**soc_sdram_argdict(args))

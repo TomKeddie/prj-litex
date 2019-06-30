@@ -1,9 +1,6 @@
-[submodule "arty/usb/hw/deps/valentyusb"]
-	path = arty/usb/hw/deps/valentyusb
-	url = https://github.com/im-tomu/valentyusb.git
-[submodule "arty/usb/hw/deps/usb"]
-	path = arty/usb/hw/deps/usb
-	url = https://github.com/pyusb/pyusb.git
 [submodule "arty/usb/sw/foboot"]
 	path = arty/usb/foboot
-	url = https://github.com/im-tomu/foboot.git
+	url = https://github.com/TomKeddie/foboot.git
+[submodule "arty/usb/picorv32"]
+	path = arty/usb/picorv32
+	url = https://github.com/cliffordwolf/picorv32/
