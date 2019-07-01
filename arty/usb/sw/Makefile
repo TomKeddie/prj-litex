@@ -1,4 +1,4 @@
-GIT_VERSION := $(shell git describe --tags)
+GIT_VERSION := $(shell git describe --tags --always)
 
 include ../include/generated/variables.mak
 include $(SOC_DIRECTORY)/software/common.mak

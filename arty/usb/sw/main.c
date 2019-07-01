@@ -12,6 +12,11 @@
 
 struct ff_spi *spi;
 
+// ICE40UP5K bitstream images (with SB_MULTIBOOT header) are
+// 104250 bytes.  The SPI flash has 4096-byte erase blocks.
+// The smallest divisible boundary is 4096*26.
+#define FBM_OFFSET ((void *)(SPIFLASH_BASE + 0x1a000))
+
 void isr(void);
 void isr(void)
 {
@@ -110,6 +115,34 @@ static void riscv_reboot_to(void *addr, uint32_t boot_config) {
     );
 }
 
+// If Foboot_Main exists on SPI flash, and if the bypass isn't active,
+// jump to FBM.
+static void maybe_boot_fbm(void) {
+    unsigned int i;
+    int matches = 0;
+    // Write a sequence of 10 bits out TOUCH2, and check their value
+    // on TOUCH0.  Every time it matches, increment a counter.
+    // If the counter matches 10 times, then don't boot FBM.
+    for (i = 0; i < 10; i++) {
+        // Set pin 2 as output, and pin 0 as input, and see if it loops back.
+        touch_oe_write((1 << 2) | (0 << 0));
+        touch_o_write((i&1) << 2);
+        if ((i&1) == (touch_i_read() & (1 << 0)))
+            matches++;
+    }
+    if (matches == 10) {
+        puts("\nForcing into FBR\n");
+        return;
+    }
+    // We've determined that we won't force entry into FBR.  Check to see
+    // if the FBM signature exists on flash.
+    uint32_t *fbr_addr = FBM_OFFSET;
+    for (i = 0; i < 64; i++) {
+        if (fbr_addr[i] == 0x032bd37d)
+            riscv_reboot_to(FBM_OFFSET, 0);
+    }
+}
+
 void reboot(void) {
     irq_setie(0);
     irq_setmask(0);
@@ -149,6 +182,9 @@ void reboot(void) {
 
 static void init(void)
 {
+    irq_setmask(0);
+    irq_setie(1);
+    uart_init();
     spi = spiAlloc();
     spiSetPin(spi, SP_MOSI, 0);
     spiSetPin(spi, SP_MISO, 1);
@@ -162,17 +198,15 @@ static void init(void)
     spiSetPin(spi, SP_D3, 3);
     spiInit(spi);
     spiFree();
-#if 0    
+
+
     maybe_boot_fbm();
-#endif
+
     spiInit(spi);
-    irq_setmask(0);
-    irq_setie(1);
-    uart_init();
     usb_init();
     dfu_init();
     time_init();
-
+    rgb_mode_idle();
 }
 
 int main(int argc, char **argv)
@@ -180,27 +214,24 @@ int main(int argc, char **argv)
     (void)argc;
     (void)argv;
 
- 	puts("USB init...\n");
+ 	puts("\nUSB init...\n");
     init();
 
- 	puts("USB booting...\n");
+ 	puts("\nUSB booting...\n");
 
-    puts("-1\n");
     usb_connect();
-    puts("0\n");
 
-    uint32_t led = 0;
-    timer0_ev_enable_write(1);
-    puts("1\n");
+    uint32_t ledcounter = 0;
+    uint8_t  ledstate  = false;
+
     while (1)
     {
-        puts("2\n");
         usb_poll();
         dfu_poll();
-        if (timer0_ev_pending_read() != 0) {
-            timer0_ev_pending_write(1);
-            usbled_out_write(led);
-            led ^= 1;
+        if (++ledcounter > 128000) {
+            usbled_out_write(ledstate);
+            ledstate ^= 1;
+            ledcounter = 0;
         }
     }
     return 0;
