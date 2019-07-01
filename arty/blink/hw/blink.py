@@ -20,8 +20,9 @@ def main():
                            sys_clk_freq,
                            integrated_rom_size=0x8000,
                            integrated_sram_size=0x8000)
-    led_pad = platform.request("user_led", 0)
-    soc.submodules.leds = gpio.GPIOOut(led_pad)
+    led_pad = platform.request("rgb_led", 0)
+    print(led_pad)
+    soc.submodules.leds = gpio.GPIOOut(led_pad.b)
     builder = Builder(soc)
     for package in builder.software_packages:
         if package[0] == "bios":
