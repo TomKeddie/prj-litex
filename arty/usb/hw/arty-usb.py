@@ -8,6 +8,7 @@ import sys
 sys.path.append(os.path.dirname(os.path.realpath(__file__)) + "/../foboot/hw/deps/valentyusb")
 
 from migen import *
+from migen.genlib.cdc import MultiReg
 
 from litex.boards.platforms import arty
 
@@ -15,7 +16,7 @@ from litex.soc.cores.clock import *
 from litex.soc.cores import gpio
 from litex.soc.cores import spi_flash
 from litex.soc.integration.soc_core import mem_decoder
-from litex.soc.integration.soc_sdram import *
+from litex.soc.integration.soc_core import *
 from litex.soc.integration.builder import *
 from litex.soc.interconnect import wishbone
 
@@ -324,14 +325,25 @@ class PicoRVSpi(Module, AutoCSR):
         )
         platform.add_source("../picorv32/picosoc/spimemio.v")
 
+# TouchPad ------------------------------------------------------------------------------------------
+class TouchPad(Module, AutoCSR):
+    def __init__(self, signal):
+        pressed = Signal()
+        self.o  = CSRStorage(size=4)
+        self.oe = CSRStorage(size=4)
+        self.i  = CSRStatus(size=4)
+        self.specials += MultiReg(signal, pressed)
+        # // Set pin 2 as output, and pin 0 as input, and see if it loops back.
+        self.comb += self.i.status[0].eq(self.o.storage[2] & self.oe.storage[2] & pressed)
+        
 # BaseSoC ------------------------------------------------------------------------------------------
-class BaseSoC(SoCSDRAM):
+class BaseSoC(SoCCore):
     soc_interrupt_map = {
         "usb":    3,
     }
-    soc_interrupt_map.update(SoCSDRAM.soc_interrupt_map)
+    soc_interrupt_map.update(SoCCore.soc_interrupt_map)
     csr_map = {
-        "ddrphy":       20,
+        "touch":        20,
         "usb":          21,
         "usbled":       22,
         "reboot":       23,
@@ -341,15 +353,15 @@ class BaseSoC(SoCSDRAM):
         "analyzer":     27,
         "debugreg":     28,
     }
-    csr_map.update(SoCSDRAM.csr_map)
+    csr_map.update(SoCCore.csr_map)
     mem_map = {
         "spiflash": 0x20000000,  # (default shadow @0xa0000000)
     }
-    mem_map.update(SoCSDRAM.mem_map)
+    mem_map.update(SoCCore.mem_map)
 
     def __init__(self, sys_clk_freq=int(100e6), **kwargs):
         platform = arty.Platform()
-        SoCSDRAM.__init__(self, platform, clk_freq=sys_clk_freq,
+        SoCCore.__init__(self, platform, clk_freq=sys_clk_freq,
                           integrated_rom_size=0x8000,
                           integrated_sram_size=0x8000,
                           cpu_type = "vexriscv",
@@ -363,13 +375,6 @@ class BaseSoC(SoCSDRAM):
         # -rw-r--r-- 1 tom tom  2192012 Jun 16 16:33 top.bin
         self.config["RESCUE_IMAGE_OFFSET"] = 0x200000
 
-        # sdram
-        self.submodules.ddrphy = s7ddrphy.A7DDRPHY(platform.request("ddram"), sys_clk_freq=sys_clk_freq)
-#        self.add_csr("ddrphy")
-        sdram_module = MT41K128M16(sys_clk_freq, "1:4")
-        self.register_sdram(self.ddrphy,
-                            sdram_module.geom_settings,
-                            sdram_module.timing_settings)
         # usb
         platform.add_extension(_usb_pmod)
         usb_pads = platform.request("usb")
@@ -397,7 +402,10 @@ class BaseSoC(SoCSDRAM):
         self.submodules.debugreg = gpio.GPIOOut(debugreg)
             
         # reset button
-        self.comb += self.cpu.reset.eq(platform.request("user_btn", 0) | self.ctrl.reset)
+        self.comb += self.cpu.reset.eq(platform.request("user_btn", 3) | self.ctrl.reset)
+
+        # user button emulating touch
+        self.submodules.touch = TouchPad(platform.request("user_btn", 0))
 
         # reboot
         self.submodules.reboot = WarmBoot(self)
@@ -411,45 +419,44 @@ class BaseSoC(SoCSDRAM):
         platform.add_platform_command("set_property BITSTREAM.CONFIG.SPI_BUSWIDTH 4 [current_design]")
         platform.add_platform_command("set_property CONFIG_MODE SPIx4 [current_design]")
 
-        # Litescope IO
-        self.submodules.io = LiteScopeIO(8)
-
         # analyzer
-        analyzer_groups = {}
-        miso = Signal(name_override="miso")
-        mosi = Signal(name_override="mosi")
-        sck = Signal(name_override="sck")
-        cs_n = Signal(name_override="cs_n")
-        wp   = Signal(name_override="wp")
-        hold = Signal(name_override="hold")
-        self.comb += miso.eq(spi_pads.miso)
-        self.comb += mosi.eq(spi_pads.mosi)
-        self.comb += sck.eq(spi_pads.clk)
-        self.comb += cs_n.eq(spi_pads.cs_n)
-        self.comb += wp.eq(spi_pads.wp)
-        self.comb += hold.eq(spi_pads.hold)
-        analyzer_groups[0] = [
-            miso,
-            mosi,
-            sck,
-            cs_n,
-            wp,
-            hold,
-        ]
-        self.submodules.analyzer = LiteScopeAnalyzer(analyzer_groups, 512)
+        if False:
+            analyzer_groups = {}
+            miso = Signal(name_override="miso")
+            mosi = Signal(name_override="mosi")
+            sck = Signal(name_override="sck")
+            cs_n = Signal(name_override="cs_n")
+            wp   = Signal(name_override="wp")
+            hold = Signal(name_override="hold")
+            self.comb += miso.eq(spi_pads.miso)
+            self.comb += mosi.eq(spi_pads.mosi)
+            self.comb += sck.eq(spi_pads.clk)
+            self.comb += cs_n.eq(spi_pads.cs_n)
+            self.comb += wp.eq(spi_pads.wp)
+            self.comb += hold.eq(spi_pads.hold)
+            analyzer_groups[0] = [
+                miso,
+                mosi,
+                sck,
+                cs_n,
+                wp,
+                hold,
+            ]
+            self.submodules.analyzer = LiteScopeAnalyzer(analyzer_groups, 512)
 
         # ila
-        platform.add_source("ila_0/ila_0.xci")
-        probe0 = Signal(6)
-        probe1 = Signal(16)
-        self.comb += probe0.eq(Cat(spi_pads.clk, spi_pads.cs_n, spi_pads.wp, spi_pads.hold, spi_pads.miso, spi_pads.mosi))
-        self.comb += probe1.eq(debugreg)
-        self.specials += [
-            Instance("ila_0", i_clk=self.crg.cd_sys.clk, i_probe0=probe0, i_probe1=probe1),
+        if False:
+            platform.add_source("ila_0/ila_0.xci")
+            probe0 = Signal(6)
+            probe1 = Signal(16)
+            self.comb += probe0.eq(Cat(spi_pads.clk, spi_pads.cs_n, spi_pads.wp, spi_pads.hold, spi_pads.miso, spi_pads.mosi))
+            self.comb += probe1.eq(debugreg)
+            self.specials += [
+                Instance("ila_0", i_clk=self.crg.cd_sys.clk, i_probe0=probe0, i_probe1=probe1),
             ]
-        platform.toolchain.additional_commands +=  [
-            "write_debug_probes -force {build_name}.ltx",
-        ]
+            platform.toolchain.additional_commands +=  [
+                "write_debug_probes -force {build_name}.ltx",
+            ]
 
     def do_exit(self, vns):
         self.analyzer.export_csv(vns, "test/analyzer.csv")
@@ -539,23 +546,28 @@ class EtherboneSoC(BaseSoC):
 def main():
     parser = argparse.ArgumentParser(description="LiteX SoC on Arty", conflict_handler="resolve")
     builder_args(parser)
-    soc_sdram_args(parser)
+    soc_core_args(parser)
     parser.add_argument("--with-ethernet", action="store_true",
                         help="enable Ethernet support")
-    parser.add_argument("--without-debug", action="store_true",
-                        help="disable Ethernet debug support")
+    parser.add_argument("--with-ethernet-debug", action="store_true",
+                        help="enable Ethernet debug support")
     parser.add_argument("--csr-csv", action="store_true", default="csr.csv",
                         help="csv filename")
+    parser.add_argument("--output-dir", action="store_true", default="build",
+                        help="build directory")
     args = parser.parse_args()
     
-    cls = EthernetSoC if args.with_ethernet else BaseSoC if args.without_debug else EtherboneSoC
-    soc = cls(**soc_sdram_argdict(args))
+    cls = EthernetSoC if args.with_ethernet else EtherboneSoC if args.with_ethernet_debug else BaseSoC
+    soc = cls(**soc_core_argdict(args))
     builder = Builder(soc, **builder_argdict(args))
+
+    # replace bios with our software
     for package in builder.software_packages:
        if package[0] == "bios":
            builder.software_packages.remove(package)
            break
     builder.add_software_package("bios", src_dir="../../../../sw")
+    
     builder.build()
 
 
