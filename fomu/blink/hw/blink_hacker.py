@@ -20,6 +20,7 @@ def main():
     soc = soc_core.SoCCore(platform,
                            sys_clk_freq,
                            cpu_variant="lite",
+                           with_uart=False,
                            integrated_rom_size=0x2000,
                            integrated_sram_size=0)
     # SPRAM- UP5K has single port RAM, might as well use it as SRAM to

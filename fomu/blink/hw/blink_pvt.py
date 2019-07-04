@@ -4,7 +4,7 @@ import argparse
 
 from migen import *
 
-from litex.boards.platforms import fomu_dvt
+from litex.boards.platforms import fomu_pvt
 from litex.soc.cores import *
 from litex.soc.integration import soc_core
 from litex.soc.cores import gpio
@@ -15,11 +15,12 @@ from gateware import up5kspram
 # Build --------------------------------------------------------------------------------------------
 
 def main():
-    platform = fomu_dvt.Platform()
+    platform = fomu_pvt.Platform()
     sys_clk_freq = 1/platform.default_clk_period*1e9
     soc = soc_core.SoCCore(platform,
                            sys_clk_freq,
                            cpu_variant="lite",
+                           with_uart=False,
                            integrated_rom_size=0x2000,
                            integrated_sram_size=0)
     # SPRAM- UP5K has single port RAM, might as well use it as SRAM to
