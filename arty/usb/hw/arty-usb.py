@@ -51,45 +51,40 @@ _usb_pmod = [
 # CRG ----------------------------------------------------------------------------------------------
 
 class _CRG(Module):
-    def __init__(self, platform, sys_clk_freq):
+    def __init__(self, platform):
         self.clock_domains.cd_sys = ClockDomain()
-        self.clock_domains.cd_sys4x = ClockDomain(reset_less=True)
-        self.clock_domains.cd_sys4x_dqs = ClockDomain(reset_less=True)
-        self.clock_domains.cd_clk200 = ClockDomain()
         self.clock_domains.cd_usb_12 = ClockDomain()
         self.clock_domains.cd_usb_48 = ClockDomain()
+        self.clock_domains.cd_clk100 = ClockDomain()
 
         # # #
 
         self.cd_sys.clk.attr.add("keep")
-        self.cd_sys4x.clk.attr.add("keep")
-        self.cd_sys4x_dqs.clk.attr.add("keep")
         self.cd_usb_12.clk.attr.add("keep")
         self.cd_usb_48.clk.attr.add("keep")
 
         self.submodules.pll = pll = S7PLL(speedgrade=-1)
         self.comb += pll.reset.eq(~platform.request("cpu_reset"))
         pll.register_clkin(platform.request("clk100"), 100e6)
-        pll.create_clkout(self.cd_sys, sys_clk_freq)
-        pll.create_clkout(self.cd_sys4x, 4*sys_clk_freq)
-        pll.create_clkout(self.cd_sys4x_dqs, 4*sys_clk_freq, phase=90)
-        pll.create_clkout(self.cd_clk200, 200e6)
+        pll.create_clkout(self.cd_clk100, 100e6)
         pll.create_clkout(self.cd_usb_48, 48e6)
-
-        self.submodules.idelayctrl = S7IDELAYCTRL(self.cd_clk200)
 
         eth_clk = Signal()
         self.specials += [
-            Instance("BUFR", p_BUFR_DIVIDE="4", i_CE=1, i_CLR=0, i_I=self.cd_sys.clk, o_O=eth_clk),
+            Instance("BUFR", p_BUFR_DIVIDE="4", i_CE=1, i_CLR=0, i_I=self.cd_clk100.clk, o_O=eth_clk),
             Instance("BUFG", i_I=eth_clk, o_O=platform.request("eth_ref_clk")),
         ]
 
         # use BUFR to derive 12MHz to avoid significant phase shift as ValentyUSB requires these clocks to be phase aligned
-        usb_12_bufr_clk = Signal()
+        clk12_bufr = Signal()
+        clk12 = Signal()
         self.specials += [
-            Instance("BUFR", p_BUFR_DIVIDE="4", i_CE=1, i_CLR=0, i_I=self.cd_usb_48.clk, o_O=usb_12_bufr_clk),
-            Instance("BUFG", i_I=usb_12_bufr_clk, o_O=self.cd_usb_12.clk),
+            Instance("BUFR", p_BUFR_DIVIDE="4", i_CE=1, i_CLR=0, i_I=self.cd_usb_48.clk, o_O=clk12_bufr),
+            Instance("BUFG", i_I=clk12_bufr, o_O=clk12),
         ]
+        self.comb += self.cd_sys.clk.eq(clk12)
+        self.comb += self.cd_usb_12.clk.eq(clk12)
+
 
 # WarmBoot ------------------------------------------------------------------------------------------
 class WarmBoot(Module, AutoCSR):
@@ -103,7 +98,12 @@ class WarmBoot(Module, AutoCSR):
                         & self.ctrl.storage[5] & ~self.ctrl.storage[6] & self.ctrl.storage[7])
         ]
         addr = Signal(32)
-        self.comb += addr.eq(parent.config["RESCUE_IMAGE_OFFSET"] * (self.ctrl.storage[1] * 2 + self.ctrl.storage[0]))
+        # mangle the address so entry 2 points to the rescue image
+        # 0 : DFU bootloader  (160 on fomu)
+        # 1 : ???             (157696 on fomu)
+        # 2 : user fpga image (262144 on fomu)
+        # 3 : ???             (266240 on fomu)
+        self.comb += addr.eq((parent.config["RESCUE_IMAGE_OFFSET"] >> 1) * (self.ctrl.storage[1] * 2 + self.ctrl.storage[0]))
 
         c_dummy_word = Constant(0xFFFFFFFF)  # Dummy Word
         c_sync_word = Constant(0xAA995566)   # Sync Word
@@ -111,8 +111,6 @@ class WarmBoot(Module, AutoCSR):
         c_wbstar_word = Constant(0x30020001) # Type 1 Write 1 Words to WBSTAR
         c_cmd_word = Constant(0x30008001)    # Type 1 Write 1 Words to CMD
         c_iprog_word = Constant(0x0000000F)  # IPROG Command
-
-        c_addr = Constant(0x200000)
 
         clk = ClockSignal()
         reset = ResetSignal()
@@ -159,7 +157,7 @@ class WarmBoot(Module, AutoCSR):
         # address should contain 256 dummy bytes before
         # the start of the bitstream."
         fsm.act("ADDRESS",
-                icape2_input.eq(Cat(0, c_addr[8:31])),
+                icape2_input.eq(Cat(0, addr[8:31])),
                 icape2_wr.eq(1),
                 icape2_cs.eq(1),
                 NextState("CMD"))
@@ -217,10 +215,12 @@ class WarmBoot(Module, AutoCSR):
                      i_RDWRB = icape2_rdwrb,   # 1-bit input: Read/Write Select input
             )
         ]
+        parent.config["BITSTREAM_SYNC_HEADER1"] = 0xAA995566
+        parent.config["BITSTREAM_SYNC_HEADER2"] = 0x665599AA
 
 # PicoRVSpi ----------------------------------------------------------------------------------------------
 class PicoRVSpi(Module, AutoCSR):
-    def __init__(self, platform, pads, size=2*1024*1024):
+    def __init__(self, platform, pads, ila_clk, size=16*1024*1024):
         self.size = size
 
         self.bus = bus = wishbone.Interface()
@@ -270,8 +270,11 @@ class PicoRVSpi(Module, AutoCSR):
         ]
 
         flash_addr = Signal(24)
-        mem_bits = bits_for(size)
-        self.comb += flash_addr.eq(bus.adr[0:mem_bits-2] << 2),
+        # size/4 because data bus is 32 bits wide, -1 for base 0
+        mem_bits = bits_for(int(size/4) - 1)
+        print("mem_bits={}".format(mem_bits))
+        pad = Signal(2)
+        self.comb += flash_addr.eq(Cat(pad, bus.adr[0:mem_bits]))
 
         read_active = Signal()
         spi_ready = Signal()
@@ -325,6 +328,39 @@ class PicoRVSpi(Module, AutoCSR):
         )
         platform.add_source("../picorv32/picosoc/spimemio.v")
 
+        if True:
+            probe8 = Signal(4)
+            probe9 = Signal(4)
+            probe10 = Signal(4)
+
+            self.comb += probe8.eq(Cat(mosi_pad.oe, miso_pad.oe, wp_pad.oe, hold_pad.oe))
+            self.comb += probe9.eq(Cat(mosi_pad.o, miso_pad.o, wp_pad.o, hold_pad.o))
+            self.comb += probe10.eq(Cat(mosi_pad.i, miso_pad.i, wp_pad.i, hold_pad.i))
+            
+            platform.add_source("ila_1/ila_1.xci")
+            self.specials += [
+                Instance("ila_1",
+                         i_clk=ila_clk,
+                         i_probe0=flash_addr,
+                         i_probe1=o_rdata,
+                         i_probe2=spi_ready,
+                         i_probe3=bus.stb & bus.cyc,
+                         i_probe4=cfg,
+                         i_probe5=cfg_we,
+                         i_probe6=clk_pad.o,
+                         i_probe7=cs_n_pad.o,
+                         i_probe8=probe8,
+                         i_probe9=probe9,
+                         i_probe10=probe10,
+                         i_probe11=mosi_pad.o,
+                         i_probe12=miso_pad.i,
+                ),
+            ]
+            platform.toolchain.additional_commands +=  [
+                "write_debug_probes -force {build_name}.ltx",
+            ]
+        
+
 # TouchPad ------------------------------------------------------------------------------------------
 class TouchPad(Module, AutoCSR):
     def __init__(self, signal):
@@ -336,6 +372,137 @@ class TouchPad(Module, AutoCSR):
         # // Set pin 2 as output, and pin 0 as input, and see if it loops back.
         self.comb += self.i.status[0].eq(self.o.storage[2] & self.oe.storage[2] & pressed)
         
+# TouchPad ------------------------------------------------------------------------------------------
+class SBLED(Module, AutoCSR):
+    def __init__(self, pads):
+        self.dat = CSRStorage(8)
+        self.addr = CSRStorage(4)
+        self.ctrl = CSRStorage(4)
+
+#        self.specials += Instance("SB_RGBA_DRV",
+#            i_CURREN = self.ctrl.storage[1],
+#            i_RGBLEDEN = self.ctrl.storage[2],
+#            i_RGB0PWM = rgba_pwm[0],
+#            i_RGB1PWM = rgba_pwm[1],
+#            i_RGB2PWM = rgba_pwm[2],
+#            o_RGB0 = pads.rgb0,
+#            o_RGB1 = pads.rgb1,
+#            o_RGB2 = pads.rgb2,
+#            p_CURRENT_MODE = "0b1",
+#            p_RGB0_CURRENT = "0b000011",
+#            p_RGB1_CURRENT = "0b000001",
+#            p_RGB2_CURRENT = "0b000011",
+#        )
+#
+#        self.specials += Instance("SB_LEDDA_IP",
+#            i_LEDDCS = self.dat.re,
+#            i_LEDDCLK = ClockSignal(),
+#            i_LEDDDAT7 = self.dat.storage[7],
+#            i_LEDDDAT6 = self.dat.storage[6],
+#            i_LEDDDAT5 = self.dat.storage[5],
+#            i_LEDDDAT4 = self.dat.storage[4],
+#            i_LEDDDAT3 = self.dat.storage[3],
+#            i_LEDDDAT2 = self.dat.storage[2],
+#            i_LEDDDAT1 = self.dat.storage[1],
+#            i_LEDDDAT0 = self.dat.storage[0],
+#            i_LEDDADDR3 = self.addr.storage[3],
+#            i_LEDDADDR2 = self.addr.storage[2],
+#            i_LEDDADDR1 = self.addr.storage[1],
+#            i_LEDDADDR0 = self.addr.storage[0],
+#            i_LEDDDEN = self.dat.re,
+#            i_LEDDEXE = self.ctrl.storage[0],
+#            # o_LEDDON = led_is_on, # Indicates whether LED is on or not
+#            # i_LEDDRST = ResetSignal(), # This port doesn't actually exist
+#            o_PWMOUT0 = rgba_pwm[0], 
+#            o_PWMOUT1 = rgba_pwm[1], 
+#            o_PWMOUT2 = rgba_pwm[2],
+#            o_LEDDON = Signal(), 
+#        )
+
+# Version ------------------------------------------------------------------------------------------
+class Version(Module, AutoCSR):
+    def __init__(self):
+        def makeint(i, base=10):
+            try:
+                return int(i, base=base)
+            except:
+                return 0
+        def get_gitver():
+            import subprocess
+            def decode_version(v):
+                version = v.split(".")
+                major = 0
+                minor = 0
+                rev = 0
+                if len(version) >= 3:
+                    rev = makeint(version[2])
+                if len(version) >= 2:
+                    minor = makeint(version[1])
+                if len(version) >= 1:
+                    major = makeint(version[0])
+                return (major, minor, rev)
+            git_rev_cmd = subprocess.Popen(["git", "describe", "--tags", "--always", "--dirty=+"],
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE)
+            (git_stdout, _) = git_rev_cmd.communicate()
+            if git_rev_cmd.wait() != 0:
+                print('unable to get git version')
+                return
+            raw_git_rev = git_stdout.decode().strip()
+
+            dirty = False
+            if raw_git_rev[-1] == "+":
+                raw_git_rev = raw_git_rev[:-1]
+                dirty = True
+
+            parts = raw_git_rev.split("-")
+            major = 0
+            minor = 0
+            rev = 0
+            gitrev = 0
+            gitextra = 0
+
+            if len(parts) >= 3:
+                if parts[0].startswith("v"):
+                    version = parts[0]
+                    if version.startswith("v"):
+                        version = parts[0][1:]
+                    (major, minor, rev) = decode_version(version)
+                gitextra = makeint(parts[1])
+                if parts[2].startswith("g"):
+                    gitrev = makeint(parts[2][1:], base=16)
+            elif len(parts) >= 2:
+                if parts[1].startswith("g"):
+                    gitrev = makeint(parts[1][1:], base=16)
+                version = parts[0]
+                if version.startswith("v"):
+                    version = parts[0][1:]
+                (major, minor, rev) = decode_version(version)
+            elif len(parts) >= 1:
+                version = parts[0]
+                if version.startswith("v"):
+                    version = parts[0][1:]
+                (major, minor, rev) = decode_version(version)
+
+            return (major, minor, rev, gitrev, gitextra, dirty)
+
+        self.major = CSRStatus(8)
+        self.minor = CSRStatus(8)
+        self.revision = CSRStatus(8)
+        self.gitrev = CSRStatus(32)
+        self.gitextra = CSRStatus(10)
+        self.dirty = CSRStatus(1)
+
+        (major, minor, rev, gitrev, gitextra, dirty) = get_gitver()
+        self.comb += [
+            self.major.status.eq(major),
+            self.minor.status.eq(minor),
+            self.revision.status.eq(rev),
+            self.gitrev.status.eq(gitrev),
+            self.gitextra.status.eq(gitextra),
+            self.dirty.status.eq(dirty),
+        ]
+
 # BaseSoC ------------------------------------------------------------------------------------------
 class BaseSoC(SoCCore):
     soc_interrupt_map = {
@@ -345,13 +512,14 @@ class BaseSoC(SoCCore):
     csr_map = {
         "touch":        20,
         "usb":          21,
-        "usbled":       22,
-        "reboot":       23,
-        "picorvspi":    24,
-        "rgb":          25,
-        "io":           26,
-        "analyzer":     27,
-        "debugreg":     28,
+        "reboot":       22,
+        "picorvspi":    23,
+        "rgb":          24,
+        "io":           25,
+        "analyzer":     26,
+        "debugreg":     27,
+        "rgbdirect":    28,
+        "version":      29,
     }
     csr_map.update(SoCCore.csr_map)
     mem_map = {
@@ -359,7 +527,7 @@ class BaseSoC(SoCCore):
     }
     mem_map.update(SoCCore.mem_map)
 
-    def __init__(self, sys_clk_freq=int(100e6), **kwargs):
+    def __init__(self, sys_clk_freq=int(12e6), **kwargs):
         platform = arty.Platform()
         SoCCore.__init__(self, platform, clk_freq=sys_clk_freq,
                           integrated_rom_size=0x8000,
@@ -368,12 +536,14 @@ class BaseSoC(SoCCore):
                           cpu_variant = "std_debug",
                           **kwargs)
 
-        self.submodules.crg = _CRG(platform, sys_clk_freq)
+        self.submodules.crg = _CRG(platform)
 
-        # Tell the s/w where to put the user image.  N25Q128 is 128-Mbit or
-        # 16Mbyte, leave 2Mbyte for bootloader image (could be smaller)
         # -rw-r--r-- 1 tom tom  2192012 Jun 16 16:33 top.bin
-        self.config["RESCUE_IMAGE_OFFSET"] = 0x200000
+        # Tell the s/w where to put the user image.  N25Q128 is 128-Mbit or
+        # 16Mbyte, leave 4Mbyte for each image (could be smaller but is
+        # simpler if they are all the same)
+        # rescue image goes in slot 2 so use 2x image size for the offsetx
+        self.config["RESCUE_IMAGE_OFFSET"] = 0x800000
 
         # usb
         platform.add_extension(_usb_pmod)
@@ -382,20 +552,23 @@ class BaseSoC(SoCCore):
         self.submodules.usb = epfifo.PerEndpointFifoInterface(usb_iobuf, debug=True)
         self.add_wb_master(self.usb.debug_bridge.wishbone)
 #        self.add_csr("usb")
-        
-        # usb led
-        self.submodules.usbled = gpio.GPIOOut(usb_pads.led)
-#        self.add_csr("usbled")
+
+        # RGB led, ice40 emulation
+        rgbled = platform.request("rgb_led", 0)
+        self.submodules.rgb = SBLED(Cat(rgbled.r, rgbled.g, rgbled.b))
+        self.submodules.version = Version()
 
         # spi flash
         spi_pads = platform.request("spiflash")
-        self.submodules.picorvspi = PicoRVSpi(platform, spi_pads)
-        self.register_mem("spiflash", self.mem_map["spiflash"],
-            self.picorvspi.bus, size=self.picorvspi.size)
+        self.submodules.picorvspi = PicoRVSpi(platform, spi_pads, self.crg.cd_usb_48.clk)
+        self.register_mem("spiflash",
+                          self.mem_map["spiflash"],
+                          self.picorvspi.bus,
+                          size=self.picorvspi.size)
 
-        # RGB leds
-        rgbled = platform.request("rgb_led", 0)
-        self.submodules.rgb = gpio.GPIOOut(Cat(rgbled.r, rgbled.g, rgbled.b))
+        # RGB leds direct drive
+        rgbleddirect = platform.request("rgb_led", 1)
+        self.submodules.rgbdirect = gpio.GPIOOut(Cat(rgbleddirect.r, rgbleddirect.g, rgbleddirect.b))
 
         # debug
         debugreg = Signal(16)
@@ -448,11 +621,9 @@ class BaseSoC(SoCCore):
         if False:
             platform.add_source("ila_0/ila_0.xci")
             probe0 = Signal(6)
-            probe1 = Signal(16)
             self.comb += probe0.eq(Cat(spi_pads.clk, spi_pads.cs_n, spi_pads.wp, spi_pads.hold, spi_pads.miso, spi_pads.mosi))
-            self.comb += probe1.eq(debugreg)
             self.specials += [
-                Instance("ila_0", i_clk=self.crg.cd_sys.clk, i_probe0=probe0, i_probe1=probe1),
+                Instance("ila_0", i_clk=ClockSignal(), i_probe0=probe0, i_probe1=debugreg),
             ]
             platform.toolchain.additional_commands +=  [
                 "write_debug_probes -force {build_name}.ltx",

@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <string.h>
 #include <irq.h>
 #include <uart.h>
 #include <../../../../foboot/sw/include/usb.h>
@@ -45,19 +46,19 @@ void sleep(unsigned int seconds) {
 }
 
 void rgb_mode_error(void) {
-    rgb_out_write(1); // red
+    rgbdirect_out_write(1); // red
 }
 
 void rgb_mode_writing(void) {
-    rgb_out_write(2); // blue
+    rgbdirect_out_write(2); // green
 }
 
 void rgb_mode_done(void) {
-    rgb_out_write(6); // green/blue
+    rgbdirect_out_write(6); // light blue
 }
 
 void rgb_mode_idle(void) {
-    rgb_out_write(4);
+    rgbdirect_out_write(4); // dark blue
 }
 
 static void riscv_reboot_to(void *addr, uint32_t boot_config) {
@@ -159,8 +160,11 @@ void reboot(void) {
     uint32_t *destination_array = (uint32_t *)reboot_addr;
     for (i = 0; i < 32; i++) {
         // Look for FPGA sync pulse.
-        if ((destination_array[i] == 0x7e99aa7e)
-         || (destination_array[i] == 0x7eaa997e)) {
+        printf("%08x\n", destination_array[i]);
+        sleep(1);
+        if ((destination_array[i] == CONFIG_BITSTREAM_SYNC_HEADER1)
+         || (destination_array[i] == CONFIG_BITSTREAM_SYNC_HEADER2)) {
+            puts("\nFound sync pulse\n");
             riscv_boot = 0;
             break;
         }
@@ -169,6 +173,9 @@ void reboot(void) {
             boot_config = destination_array[i + 1];
         }
     }
+
+    printf("\nBAM %d\n", riscv_boot);
+    sleep(1);
 
     if (riscv_boot) {
         riscv_reboot_to((void *)reboot_addr, boot_config);
@@ -221,18 +228,10 @@ int main(int argc, char **argv)
 
     usb_connect();
 
-    uint32_t ledcounter = 0;
-    uint8_t  ledstate  = false;
-
     while (1)
     {
         usb_poll();
         dfu_poll();
-        if (++ledcounter > 128000) {
-            usbled_out_write(ledstate);
-            ledstate ^= 1;
-            ledcounter = 0;
-        }
     }
     return 0;
 }
