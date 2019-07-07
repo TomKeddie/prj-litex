@@ -22,7 +22,9 @@ def main():
                            integrated_sram_size=0x8000)
     led_pad = platform.request("rgb_led", 0)
     print(led_pad)
-    soc.submodules.leds = gpio.GPIOOut(led_pad.b)
+    soc.submodules.leds = gpio.GPIOOut(led_pad.g)
+    soc.add_csr("leds")
+    
     builder = Builder(soc)
     for package in builder.software_packages:
         if package[0] == "bios":
