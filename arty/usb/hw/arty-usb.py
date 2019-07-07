@@ -505,23 +505,6 @@ class Version(Module, AutoCSR):
 
 # BaseSoC ------------------------------------------------------------------------------------------
 class BaseSoC(SoCCore):
-    soc_interrupt_map = {
-        "usb":    3,
-    }
-    soc_interrupt_map.update(SoCCore.soc_interrupt_map)
-    csr_map = {
-        "touch":        20,
-        "usb":          21,
-        "reboot":       22,
-        "picorvspi":    23,
-        "rgb":          24,
-        "io":           25,
-        "analyzer":     26,
-        "debugreg":     27,
-        "rgbdirect":    28,
-        "version":      29,
-    }
-    csr_map.update(SoCCore.csr_map)
     mem_map = {
         "spiflash": 0x20000000,  # (default shadow @0xa0000000)
     }
@@ -551,16 +534,21 @@ class BaseSoC(SoCCore):
         usb_iobuf = usbio.IoBuf(usb_pads.d_p, usb_pads.d_n, usb_pads.pullup)
         self.submodules.usb = epfifo.PerEndpointFifoInterface(usb_iobuf, debug=True)
         self.add_wb_master(self.usb.debug_bridge.wishbone)
-#        self.add_csr("usb")
+        self.add_csr("usb")
+        self.add_interrupt("usb")
 
         # RGB led, ice40 emulation
         rgbled = platform.request("rgb_led", 0)
         self.submodules.rgb = SBLED(Cat(rgbled.r, rgbled.g, rgbled.b))
+        self.add_csr("rgb")
+        
         self.submodules.version = Version()
+        self.add_csr("version")
 
         # spi flash
         spi_pads = platform.request("spiflash")
         self.submodules.picorvspi = PicoRVSpi(platform, spi_pads, self.crg.cd_usb_48.clk)
+        self.add_csr("picorvspi")
         self.register_mem("spiflash",
                           self.mem_map["spiflash"],
                           self.picorvspi.bus,
@@ -569,20 +557,23 @@ class BaseSoC(SoCCore):
         # RGB leds direct drive
         rgbleddirect = platform.request("rgb_led", 1)
         self.submodules.rgbdirect = gpio.GPIOOut(Cat(rgbleddirect.r, rgbleddirect.g, rgbleddirect.b))
+        self.add_csr("rgbdirect")
 
         # debug
         debugreg = Signal(16)
         self.submodules.debugreg = gpio.GPIOOut(debugreg)
+        self.add_csr("debugreg")
             
         # reset button
         self.comb += self.cpu.reset.eq(platform.request("user_btn", 3) | self.ctrl.reset)
 
         # user button emulating touch
         self.submodules.touch = TouchPad(platform.request("user_btn", 0))
+        self.add_csr("touch")
 
         # reboot
         self.submodules.reboot = WarmBoot(self)
-#        self.add_csr("reboot")
+        self.add_csr("reboot")
 
         # config memory settings for xdc
         platform.add_platform_command("set_property CFGBVS VCCO [current_design]")
@@ -616,6 +607,7 @@ class BaseSoC(SoCCore):
                 hold,
             ]
             self.submodules.analyzer = LiteScopeAnalyzer(analyzer_groups, 512)
+            self.add_csr("analyzer")
 
         # ila
         if False:
@@ -639,28 +631,19 @@ class EthernetSoC(BaseSoC):
         "ethmac": 0x30000000,  # (shadow @0xb0000000)
     }
     mem_map.update(BaseSoC.mem_map)
-    soc_interrupt_map = {
-        "ethmac":    4,
-    }
-    soc_interrupt_map.update(BaseSoC.soc_interrupt_map)
-    csr_map = {
-        "ethphy":         30,
-        "ethmac":         31,
-    }
-    csr_map.update(BaseSoC.csr_map)
 
     def __init__(self, **kwargs):
         BaseSoC.__init__(self, **kwargs)
 
         self.submodules.ethphy = LiteEthPHYMII(self.platform.request("eth_clocks"),
                                                self.platform.request("eth"))
-#        self.add_csr("ethphy")
+        self.add_csr("ethphy")
         self.submodules.ethmac = LiteEthMAC(phy=self.ethphy, dw=32,
                                             interface="wishbone", endianness=self.cpu.endianness)
         self.add_wb_slave(mem_decoder(self.mem_map["ethmac"]), self.ethmac.bus)
         self.add_memory_region("ethmac", self.mem_map["ethmac"] | self.shadow_base, 0x2000)
-#        self.add_csr("ethmac")
-#        self.add_interrupt("ethmac")
+        self.add_csr("ethmac")
+        self.add_interrupt("ethmac")
 
         self.ethphy.crg.cd_eth_rx.clk.attr.add("keep")
         self.ethphy.crg.cd_eth_tx.clk.attr.add("keep")
