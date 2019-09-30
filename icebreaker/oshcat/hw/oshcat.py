@@ -33,7 +33,7 @@ _sao_pmod = [
 _serial2_pmod = [
     ("serial2", 0,
         Subsignal("rx", Pins("PMOD1B:0")),
-        Subsignal("tx", Pins("PMOD1B:1")),
+        Subsignal("tx", Pins("PMOD1B:1"), Misc("PULLUP")),
         IOStandard("LVCMOS33")
     ),
 ]
@@ -44,6 +44,7 @@ def main():
     sys_clk_freq = 1/platform.default_clk_period*1e9
     soc = soc_core.SoCCore(platform,
                            sys_clk_freq,
+                           cpu_variant="lite+debug",
                            with_uart=True,
                            integrated_rom_size=0x2000,
                            integrated_sram_size=0)
@@ -53,7 +54,6 @@ def main():
     soc.submodules.spram = ice40.SPRAM(size=spram_size)
     soc.register_mem("sram", 0x10000000, soc.spram.bus, spram_size)
     
-#    platform.add_extension(_serial2_pmod)
     platform.add_extension(_sao_pmod)
     sao_pads = platform.request("sao")
     soc.submodules.sao = gpio.GPIOOut(Cat(sao_pads.eye_right, sao_pads.osh_lower))
@@ -63,8 +63,9 @@ def main():
     soc.add_csr("pwm")
 
     # https://github.com/timvideos/litex-buildenv/wiki/LiteX-for-Hardware-Engineers#litescope-bridge
-    # soc.submodules.uartbridge = UARTWishboneBridge(platform.request("serial2"), int(sys_clk_freq), baudrate=115200)
-    # soc.add_wb_master(soc.uartbridge.wishbone)
+    platform.add_extension(_serial2_pmod)
+    soc.submodules.uartbridge = UARTWishboneBridge(platform.request("serial2"), int(sys_clk_freq), baudrate=115200)
+    soc.add_wb_master(soc.uartbridge.wishbone)
 
     led_pad = platform.request("user_led_n", 1)
     soc.submodules.leds = gpio.GPIOOut(led_pad)
