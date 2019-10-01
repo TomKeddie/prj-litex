@@ -12,11 +12,12 @@ from litex.soc.cores.uart import UARTWishboneBridge
 from litex.soc.integration import soc_core
 from litex.soc.integration.builder import *
 
+from litex.soc.interconnect.csr import *
+
 from litex.build.generic_platform import Pins, IOStandard, Misc, Subsignal
 
 
 from gateware import ice40
-from gateware import pwm
 
 # Build --------------------------------------------------------------------------------------------
 
@@ -39,13 +40,52 @@ _serial2_pmod = [
 ]
 
 
+class PWM(Module, AutoCSR):
+    def __init__(self, pwm_pin, width=32):
+        self._pwm_enable = CSRStorage()
+        self._pwm_divider = CSRStorage(16)
+        self._pwm_width  = CSRStorage(width)
+        self._pwm_period = CSRStorage(width)
+        self._pwm_cnt    = CSRStatus(width)
+
+        # # #
+
+        pwm_count = Signal(width)
+        pwm_clock_divide = Signal(16)
+
+        self.sync += self._pwm_cnt.status.eq(pwm_count)
+        self.sync += \
+            If(self._pwm_enable.storage,
+                If(pwm_clock_divide == self._pwm_divider.storage,
+                   pwm_clock_divide.eq(0),
+                   If(pwm_count < self._pwm_width.storage,
+                      pwm_pin.eq(1)
+                   ).Else(
+                      pwm_pin.eq(0)
+                   ),
+                   If(pwm_count == self._pwm_period.storage-1,
+                      pwm_count.eq(0)
+                   ).Else(
+                       pwm_count.eq(pwm_count+1)
+                   )
+                ).Else(
+                    pwm_clock_divide.eq(pwm_clock_divide+1)
+                )
+            ).Else(
+                pwm_count.eq(0),
+                pwm_pin.eq(0),
+                pwm_clock_divide.eq(0)
+            )
+
 def main():
     platform = icebreaker.Platform()
     sys_clk_freq = 1/platform.default_clk_period*1e9
     soc = soc_core.SoCCore(platform,
                            sys_clk_freq,
                            cpu_variant="lite+debug",
-                           with_uart=True,
+                           with_uart=False,
+                           uart_stub=True,
+                           with_ctrl=False,
                            integrated_rom_size=0x2000,
                            integrated_sram_size=0)
     # SPRAM- UP5K has single port RAM, might as well use it as SRAM to
@@ -56,22 +96,22 @@ def main():
     
     platform.add_extension(_sao_pmod)
     sao_pads = platform.request("sao")
-    soc.submodules.sao = gpio.GPIOOut(Cat(sao_pads.eye_right, sao_pads.osh_lower))
-    soc.add_csr("sao")
 
-    soc.submodules.pwm = pwm.PWM(sao_pads.osh_upper)
-    soc.add_csr("pwm")
+    soc.submodules.pwm_upper = PWM(sao_pads.osh_upper, 8)
+    soc.add_csr("pwm_upper")
+    soc.submodules.pwm_lower = PWM(sao_pads.osh_lower, 8)
+    soc.add_csr("pwm_lower")
+    soc.submodules.pwm_right = PWM(sao_pads.eye_right, 8)
+    soc.add_csr("pwm_right")
+    soc.submodules.pwm_left = PWM(sao_pads.eye_left, 8)
+    soc.add_csr("pwm_left")
 
     # https://github.com/timvideos/litex-buildenv/wiki/LiteX-for-Hardware-Engineers#litescope-bridge
     platform.add_extension(_serial2_pmod)
     soc.submodules.uartbridge = UARTWishboneBridge(platform.request("serial2"), int(sys_clk_freq), baudrate=115200)
     soc.add_wb_master(soc.uartbridge.wishbone)
 
-    led_pad = platform.request("user_led_n", 1)
-    soc.submodules.leds = gpio.GPIOOut(led_pad)
-    soc.add_csr("leds")
-
-    builder = Builder(soc) # csr_csv="csr.csv")
+    builder = Builder(soc, csr_csv="csr.csv")
     
     for package in builder.software_packages:
         if package[0] == "bios":
