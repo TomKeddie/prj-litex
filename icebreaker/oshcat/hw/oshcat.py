@@ -85,7 +85,6 @@ def main():
                            cpu_variant="lite+debug",
                            with_uart=False,
                            uart_stub=True,
-                           with_ctrl=False,
                            integrated_rom_size=0x2000,
                            integrated_sram_size=0)
     # SPRAM- UP5K has single port RAM, might as well use it as SRAM to
@@ -110,6 +109,7 @@ def main():
     platform.add_extension(_serial2_pmod)
     soc.submodules.uartbridge = UARTWishboneBridge(platform.request("serial2"), int(sys_clk_freq), baudrate=115200)
     soc.add_wb_master(soc.uartbridge.wishbone)
+    soc.register_mem("vexriscv_debug", 0xf00f0000, soc.cpu.debug_bus, 0x10)
 
     builder = Builder(soc, csr_csv="csr.csv")
     
