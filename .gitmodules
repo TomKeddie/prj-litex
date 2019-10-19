@@ -4,6 +4,3 @@
 [submodule "arty/usb/picorv32"]
 	path = arty/usb/picorv32
 	url = https://github.com/cliffordwolf/picorv32/
-[submodule "arty/ulpi/hw/ov_ftdi"]
-	path = arty/ulpi/hw/ov_ftdi
-	url = https://github.com/openvizsla/ov_ftdi.git
