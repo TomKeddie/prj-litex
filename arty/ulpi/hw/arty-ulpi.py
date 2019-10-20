@@ -14,9 +14,8 @@ from litex.soc.cores.uart import UARTWishboneBridge
 from litex.soc.integration import soc_core
 from litex.soc.integration.builder import *
 import litex.soc.interconnect.stream as al_fifo
-from litex.build.generic_platform import Pins, IOStandard, Misc, Subsignal
+from litex.build.generic_platform import Pins, IOStandard, Misc, Subsignal, Inverted
 
-import ovhw.clocking as clocking
 from ovhw.ulpi import ULPI_ctrl, ULPI_pl, ULPI_REG
 from ovhw.ulpicfg import ULPICfg
 from ovhw.ovf_insert import OverflowInserter
@@ -29,7 +28,7 @@ _ulpi_pmod = [
         Subsignal("dir", Pins("pmodb:6")),
         Subsignal("clk", Pins("pmodb:2"), Misc("PULLDOWN")),
         Subsignal("nxt", Pins("pmodb:7")),
-        IOStandard("LVCMOS33"), Misc("SLEW=FAST")
+        IOStandard("LVCMOS33")
     ),
     ("target", 0,
         Subsignal("dp", Pins("pmodb:0")),
@@ -37,7 +36,8 @@ _ulpi_pmod = [
         IOStandard("LVCMOS33")
     ),
     ("ulpi_led", 0,
-        Subsignal("led", Pins("pmodb:5")),
+        Subsignal("led", Pins("pmodb:5"), Inverted()),
+        IOStandard("LVCMOS33")
     ),
 ]
 
@@ -60,10 +60,6 @@ class _CRG(Module):
 
 class _OV3(Module):
     def __init__(self, clk12, soc):
-        # Clocking
-        self.submodules.clockgen = clocking.ClockGen(clk12)
-        self.clock_domains.cd_sys = self.clockgen.cd_sys
-
         # ULPI Interfce
 
         # Diagnostics/Testing signals
@@ -71,19 +67,19 @@ class _OV3(Module):
         ulpi_stp_ovr = Signal(1)
         
         # ULPI physical layer
-        self.submodules.ulpi_pl = ULPI_pl(
+        soc.submodules.ulpi_pl = ULPI_pl(
             soc.platform.request("ulpi"), ulpi_cd_rst, ulpi_stp_ovr)
-        self.clock_domains.cd_ulpi = self.ulpi_pl.cd_ulpi
+        soc.clock_domains.cd_ulpi = soc.ulpi_pl.cd_ulpi
         
         # ULPI controller
         ulpi_reg = Record(ULPI_REG)
-        self.submodules.ulpi = ClockDomainsRenamer({"sys": "ulpi"}) (
-          ULPI_ctrl(self.ulpi_pl.ulpi_bus, ulpi_reg),
+        soc.submodules.ulpi = ClockDomainsRenamer({"sys": "ulpi"}) (
+          ULPI_ctrl(soc.ulpi_pl.ulpi_bus, ulpi_reg),
         )
 
         # ULPI register R/W CSR interface
-        self.submodules.ucfg = ULPICfg(
-            self.cd_ulpi.clk, ulpi_cd_rst, self.ulpi_pl.ulpi_bus.rst,
+        soc.submodules.ucfg = ULPICfg(
+            soc.cd_ulpi.clk, ulpi_cd_rst, soc.ulpi_pl.ulpi_bus.rst,
             ulpi_stp_ovr, ulpi_reg)
         soc.add_csr("ucfg")
 
@@ -94,7 +90,7 @@ class _OV3(Module):
 
 def main():
     platform = arty.Platform()
-    sys_clk_freq = 1/platform.default_clk_period*1e9
+    sys_clk_freq = 12e6
     soc = soc_core.SoCCore(platform,
                            sys_clk_freq,
                            cpu_variant="lite+debug",
@@ -107,8 +103,16 @@ def main():
     # reset button
     soc.comb += soc.cpu.reset.eq(platform.request("user_btn", 3) | soc.ctrl.reset)
 
-    # ulpi
+
+    # pmod
     platform.add_extension(_ulpi_pmod)
+
+    # led
+    led_pad = platform.request("ulpi_led", 0)
+    soc.submodules.led = gpio.GPIOOut(led_pad.led)
+    soc.add_csr("led")
+
+    # ulpi
     ov3 = _OV3(soc.crg.cd_sys.clk, soc)
 
     # debug
@@ -135,7 +139,7 @@ def main():
             "write_debug_probes -force {build_name}.ltx",
         ]
     
-    builder = Builder(soc)
+    builder = Builder(soc, csr_csv="csr.csv")
     builder.build()
 
 if __name__ == "__main__":
