@@ -72,6 +72,15 @@ def ulpiread(wb, addr):
     
     return wb.read(0x82003010)
 
+def ulpiwrite(wb, addr, value):
+    #assert self.__check_clkup()
+
+    wb.write(0x82003008, value)
+    wb.write(0x8200300c, UCFG_REG_GO | (addr & UCFG_REG_ADDRMASK))
+
+    while wb.read(0x8200300c) & UCFG_REG_GO:
+        pass
+
 wb = RemoteClient()
 wb.open()
 # csr_register,ucfg_rst,0x82003000,1,rw
@@ -91,6 +100,18 @@ print("0x{:08x}".format(wb.read(0x82002800)))
 # ulpi
 print("VID 0x{:02x}{:02x}".format(ulpiread(wb, 1), ulpiread(wb, 0)))
 
+print("clock lock {:02x}".format(wb.read(0x82003004)))
+
+# set to non-drive; set FS or HS as requested
+speed = "ls"
+if speed == "hs":
+    ulpiwrite(wb, 4, 0x48)
+elif speed == "fs":
+    ulpiwrite(wb, 4, 0x49)
+elif speed == "ls":
+    ulpiwrite(wb, 4, 0x4a)
+else:
+    assert 0,"Invalid Speed"
 
 wb.close()
 
