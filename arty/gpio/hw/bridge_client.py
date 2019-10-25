@@ -6,8 +6,16 @@ wb.open()
 
 wb.regs.leds_out.write(1)
 
-wb.regs.pmoda_pmod_oe.write(0xff)
-wb.regs.pmoda_pmod_out.write(0xff)
+wb.regs.pmoda_pins_oe.write(0xff)
+wb.regs.pmoda_pins_out.write(0xff)
+wb.regs.pmodb_pins_oe.write(0xff)
+wb.regs.pmodb_pins_out.write(0xff)
+wb.regs.pmodc_pins_oe.write(0xff)
+wb.regs.pmodc_pins_out.write(0xff)
+wb.regs.pmodd_pins_oe.write(0xff)
+wb.regs.pmodd_pins_out.write(0xff)
+
+print(wb.regs.pmoda_pins_oe.read())
 
 wb.close()
 

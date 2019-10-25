@@ -76,16 +76,14 @@ class GPIOBidirectional(Module, AutoCSR):
         pins_t = TSTriple(len(pins_pad))
 
         self.specials += pins_t.get_tristate(Cat(pins_pad.p0, pins_pad.p1, pins_pad.p2, pins_pad.p3, pins_pad.p4, pins_pad.p5, pins_pad.p6, pins_pad.p7))
-        self._pins_in = CSRStatus(len(pins_t))
-        self._pins_out = CSRStorage(len(pins_t))
-        self._pins_oe = CSRStorage(len(pins_t))
+        self._pins_in = CSRStatus(len(pins_pad))
+        self._pins_out = CSRStorage(len(pins_pad))
+        self._pins_oe = CSRStorage(len(pins_pad))
 
         self.specials += MultiReg(pins_t.i, self._pins_in.status)
-        pins_t.o.eq(self._pins_out.storage)
-        pins_t.oe.eq(self._pins_oe.storage)
+        self.comb += pins_t.o.eq(self._pins_out.storage)
+        self.comb += pins_t.oe.eq(self._pins_oe.storage)
 
-    
-        
 # Build --------------------------------------------------------------------------------------------
 
 def main():
