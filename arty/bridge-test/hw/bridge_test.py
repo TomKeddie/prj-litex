@@ -29,6 +29,13 @@ for ix in range(len(value)):
     if value[ix] != expected[ix]:
         print("{}:expected 0x{:08x} got 0x{:08x}".format(ix, expected[ix], value[ix]))
 
+
+newvalues = [0x6699aaaa, 0x56781234, 0x11111111, 0x88888888]
+wb.write(wb.regs.scratch_scratch0.addr, newvalues)
+value = wb.read(wb.regs.scratch_scratch0.addr, length=4)
+for ix in range(len(value)):
+    if value[ix] != newvalues[ix]:
+        print("{}:expected 0x{:08x} got 0x{:08x}".format(ix, newvalues[ix], value[ix]))
     
 wb.close()
 
