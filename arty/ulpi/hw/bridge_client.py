@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import sys
 from litex.tools.litex_client import RemoteClient
 
 UCFG_REG_GO = 0x80
@@ -92,13 +93,11 @@ wb.open()
 # csr_register,ucfg_rcmd,0x82003014,1,rw
 
 # led
-wb.write(0x82002800, 0)
-print("0x{:08x}".format(wb.read(0x82002800)))
-wb.write(0x82002800, 1)
-print("0x{:08x}".format(wb.read(0x82002800)))
+wb.regs.led_out.write(1)
 
 # ulpi
 print("VID 0x{:02x}{:02x}".format(ulpiread(wb, 1), ulpiread(wb, 0)))
+print("PID 0x{:02x}{:02x}".format(ulpiread(wb, 3), ulpiread(wb, 2)))
 
 print("clock lock {:02x}".format(wb.read(0x82003004)))
 
@@ -112,6 +111,8 @@ elif speed == "ls":
     ulpiwrite(wb, 4, 0x4a)
 else:
     assert 0,"Invalid Speed"
+
+wb.regs.led_out.write(0)
 
 wb.close()
 

@@ -7,6 +7,3 @@
 [submodule "arty/ulpi/hw/ov_ftdi"]
 	path = arty/ulpi/hw/ov_ftdi
 	url = git@github.com:TomKeddie/ov_ftdi.git
-[submodule "arty/ulpi/hw/litex"]
-	path = arty/ulpi/hw/litex
-	url = https://github.com/enjoy-digital/litex.git

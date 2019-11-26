@@ -14,11 +14,18 @@ from litex.soc.cores.uart import UARTWishboneBridge
 from litex.soc.integration import soc_core
 from litex.soc.integration.builder import *
 import litex.soc.interconnect.stream as al_fifo
+from litex.soc.interconnect.stream import Endpoint
 from litex.build.generic_platform import Pins, IOStandard, Misc, Subsignal, Inverted
+
+from litescope import LiteScopeAnalyzer
 
 from ovhw.ulpi import ULPI_ctrl, ULPI_pl, ULPI_REG
 from ovhw.ulpicfg import ULPICfg
 from ovhw.ovf_insert import OverflowInserter
+from ovhw.cfilt import RXCmdFilter
+from ovhw.whacker.whacker import Whacker
+from ovhw.ov_types import ULPI_DATA_D
+from ovhw.ov_types import D_LAST
 
 _ulpi_pmod = [
     ("ulpi", 0, 
@@ -41,10 +48,10 @@ _ulpi_pmod = [
     ),
 ]
 
-_serial2_pmod = [
+_serial2 = [
     ("serial2", 0,
-        Subsignal("rx", Pins("pmodc:0")),
-        Subsignal("tx", Pins("pmodc:1"), Misc("PULLUP")),
+        Subsignal("rx", Pins("ck_io:ck_io8")),
+        Subsignal("tx", Pins("ck_io:ck_io9"), Misc("PULLUP")),
         IOStandard("LVCMOS33")
     ),
 ]
@@ -59,7 +66,7 @@ class _CRG(Module):
         pll.create_clkout(self.cd_sys, 12e6)
 
 class _OV3(Module):
-    def __init__(self, clk12, soc):
+    def __init__(self, soc):
         # ULPI Interfce
 
         # Diagnostics/Testing signals
@@ -83,6 +90,40 @@ class _OV3(Module):
             ulpi_stp_ovr, ulpi_reg)
         soc.add_csr("ucfg")
 
+        # Litescope Analyzer
+        analyzer_groups = {}
+        analyzer_groups[0] = [
+            ulpi_reg,
+        ]
+        soc.submodules.analyzer = LiteScopeAnalyzer(analyzer_groups, 8192, csr_csv="analyzer.csv")
+        soc.add_csr("analyzer")
+        
+##         # Receive Path
+##         soc.submodules.ovf_insert = ClockDomainsRenamer(
+##             {"sys": "ulpi"}
+##         )(OverflowInserter())
+##         soc.add_csr("ovf_insert")
+## 
+##         soc.submodules.udata_fifo = ClockDomainsRenamer(
+##             {"write":"ulpi", "read":"sys"})(
+##             al_fifo.AsyncFIFO(ULPI_DATA_D, 1024)
+##         )
+## 
+##         soc.submodules.cfilt = RXCmdFilter()
+##         
+## #        soc.submodules.cstream = Whacker(1024)
+## #        soc.add_csr("cstream")
+## 
+##         soc.comb += [
+## #                soc.ulpi.data_out_source.connect(soc.debug_sink_data),
+##                 soc.ulpi.data_out_source.connect(soc.ovf_insert.sink),
+##                 soc.ovf_insert.source.connect(soc.udata_fifo.sink),
+##                 soc.udata_fifo.source.connect(soc.debug_sink_data),
+## #                soc.udata_fifo.source.connect(soc.cfilt.sink),
+## #                soc.cfilt.source.connect(soc.cstream.sink),
+## #                soc.cstream.source.connect(soc.debug_sink),
+##                 ]
+## 
 
 # Build --------------------------------------------------------------------------------------------
 
@@ -103,7 +144,6 @@ def main():
     # reset button
     soc.comb += soc.cpu.reset.eq(platform.request("user_btn", 3) | soc.ctrl.reset)
 
-
     # pmod
     platform.add_extension(_ulpi_pmod)
 
@@ -112,35 +152,87 @@ def main():
     soc.submodules.led = gpio.GPIOOut(led_pad.led)
     soc.add_csr("led")
 
-    # ulpi
-    ov3 = _OV3(soc.crg.cd_sys.clk, soc)
-
     # debug
     # https://github.com/timvideos/litex-buildenv/wiki/LiteX-for-Hardware-Engineers#litescope-bridge
-    platform.add_extension(_serial2_pmod)
+    platform.add_extension(_serial2)
     soc.submodules.uartbridge = UARTWishboneBridge(platform.request("serial2"), int(sys_clk_freq), baudrate=115200)
     soc.add_wb_master(soc.uartbridge.wishbone)
     soc.register_mem("vexriscv_debug", 0xf00f0000, soc.cpu.debug_bus, 0x10)
 
-    # ila
+    soc.debug_sink_last = Endpoint(D_LAST)
+    soc.debug_sink_data = Endpoint(ULPI_DATA_D)
+
+    # ulpi
+    ov3 = _OV3(soc)
+
+    # ilas
     if False:
         target_pads = platform.request("target")
         platform.add_source("ila_0/ila_0.xci")
-        probe0 = Signal(5)
-        probe1 = Signal(8)
-        probe2 = Signal(2)
-        soc.comb += probe0.eq(Cat(ulpi_pads.rst, ulpi_pads.stp, ulpi_pads.dir, ulpi_pads.clk, ulpi_pads.nxt))
-        soc.comb += probe1.eq(ulpi_pads.d)
-        soc.comb += probe2.eq(Cat(target_pads.dp, target_pads.dm))
+        ila_0_probe0 = Signal(5)
+        ila_0_probe1 = Signal(8)
+        ila_0_probe2 = Signal(2)
+        soc.comb += ila_0_probe0.eq(Cat(ulpi_pads.rst, ulpi_pads.stp, ulpi_pads.dir, ulpi_pads.clk, ulpi_pads.nxt))
+        soc.comb += ila_0_probe1.eq(ulpi_pads.d)
+        soc.comb += ila_0_probe2.eq(Cat(target_pads.dp, target_pads.dm))
         soc.specials += [
-            Instance("ila_0", i_clk=ulpi_pads.clk, i_probe0=probe0, i_probe1=probe1, i_probe2=probe2),
+            Instance("ila_0",
+                     i_clk=ulpi_pads.clk,
+                     i_probe0=ila_0_probe0,
+                     i_probe1=ila_0_probe1,
+                     i_probe2=ila_0_probe2),
         ]
-        platform.toolchain.additional_commands +=  [
-            "write_debug_probes -force {build_name}.ltx",
+    if False:
+        platform.add_source("ila_1/ila_1.xci")
+        ila_1_probe0 = Signal(8)
+        ila_1_probe1 = Signal(1)
+        ila_1_probe2 = Signal(1)
+        ila_1_probe3 = Signal(1)
+        soc.comb += ila_1_probe0.eq(soc.debug_sink_last.d)
+        soc.comb += ila_1_probe1.eq(Cat(soc.debug_sink_last.is_last))
+        soc.comb += ila_1_probe2.eq(Cat(soc.debug_sink_last.ready))
+        soc.comb += ila_1_probe3.eq(Cat(soc.debug_sink_last.valid))
+        soc.specials += [
+            Instance("ila_1",
+                     i_clk=soc.cd_ulpi.clk,
+                     i_probe0=ila_1_probe0,
+                     i_probe1=ila_1_probe1,
+                     i_probe2=ila_1_probe2,
+                     i_probe3=ila_1_probe3),
         ]
+    if False:
+        platform.add_source("ila_2/ila_2.xci")
+        ila_2_probe0 = Signal(1)
+        ila_2_probe1 = Signal(8)
+        ila_2_probe2 = Signal(1)
+        ila_2_probe3 = Signal(1)
+        ila_2_probe4 = Signal(1)
+        ila_2_probe5 = Signal(1)
+        soc.comb += ila_2_probe0.eq(Cat(soc.debug_sink_data.payload.rxcmd))
+        soc.comb += ila_2_probe1.eq(soc.debug_sink_data.payload.d)
+        soc.comb += ila_2_probe2.eq(Cat(soc.debug_sink_data.valid))
+        soc.comb += ila_2_probe3.eq(Cat(soc.debug_sink_data.ready))
+        soc.comb += ila_2_probe4.eq(Cat(soc.debug_sink_data.first))
+        soc.comb += ila_2_probe5.eq(Cat(soc.debug_sink_data.last))
+        soc.specials += [
+            Instance("ila_2",
+                     i_clk=soc.crg.cd_sys.clk,
+                     i_probe0=ila_2_probe0,
+                     i_probe1=ila_2_probe1,
+                     i_probe2=ila_2_probe2,
+                     i_probe3=ila_2_probe3,
+                     i_probe4=ila_2_probe4,
+                     i_probe5=ila_2_probe5),
+        ]
+
+
+    platform.toolchain.additional_commands +=  [
+        "write_debug_probes -force {build_name}.ltx",
+    ]
     
     builder = Builder(soc, csr_csv="csr.csv")
     builder.build()
+
 
 if __name__ == "__main__":
     main()
