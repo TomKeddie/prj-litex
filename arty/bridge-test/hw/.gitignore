@@ -1,0 +1,17 @@
+venv/
+litedram/
+liteeth/
+liteiclink/
+litejesd204b/
+litepcie/
+litesata/
+litescope/
+litesdcard/
+litevideo/
+litex-boards/
+litex/
+migen/
+analyzer.csv
+csr.csv
+soc_litescopesoc_arty/
+
