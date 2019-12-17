@@ -7,3 +7,6 @@
 [submodule "arty/ulpi/hw/ov_ftdi"]
 	path = arty/ulpi/hw/ov_ftdi
 	url = git@github.com:TomKeddie/ov_ftdi.git
+[submodule "icebreaker/pmod7/hw/litex-buildenv"]
+	path = icebreaker/pmod7/hw/litex-buildenv
+	url = https://github.com/timvideos/litex-buildenv.git
