@@ -1,0 +1,17 @@
+csr.csv
+litedram
+liteeth
+liteiclink
+litejesd204b
+litepcie
+litesata
+litescope
+litesdcard
+litevideo
+litex
+litex-boards
+litex-buildenv
+litex_setup.py
+migen
+soc_soccore_icebreaker
+venv
