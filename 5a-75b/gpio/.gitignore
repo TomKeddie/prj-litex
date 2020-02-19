@@ -1,0 +1,15 @@
+litedram
+liteeth
+liteiclink
+litejesd204b
+litepcie
+litesata
+litescope
+litesdcard
+litevideo
+litex
+litex-boards
+migen
+venv
+soc_basesoc_colorlight_5a_75b/
+csr.csv
