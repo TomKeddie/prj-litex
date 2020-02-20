@@ -52,13 +52,14 @@ _hub75_connectors = [
      Subsignal("G1", Pins("C2")),
      Subsignal("B1", Pins("E3")),
      #Subsignal("E", Pins("F15")),
-     #Subsignal("A", Pins("L2")),
-     #Subsignal("B", Pins("K1")),
+     Subsignal("A", Pins("L2")),
+     Subsignal("B", Pins("K1")),
      #Subsignal("C", Pins("J5")),
      #Subsignal("D", Pins("K2")),
      #Subsignal("CLK", Pins("B16")),  
      #Subsignal("STB", Pins("J14")),  
      #Subsignal("OE", Pins("F12")), 
+     IOStandard("LVCMOS33")
     ),
     ("j3", 0,
      Subsignal("R0", Pins("H4")),      
@@ -70,11 +71,12 @@ _hub75_connectors = [
      Subsignal("E", Pins("F15")),      
      #Subsignal("A", Pins("L2")),     
      #Subsignal("B", Pins("K1")),     
-     #Subsignal("C", Pins("J5")),     
-     #Subsignal("D", Pins("K2")),     
+     Subsignal("C", Pins("J5")),     
+     Subsignal("D", Pins("K2")),     
      #Subsignal("CLK", Pins("B16")),        
      #Subsignal("STB", Pins("J14")),        
      #Subsignal("OE", Pins("F12")),       
+     IOStandard("LVCMOS33")
     ),
     ("j4", 0,
      Subsignal("R0", Pins("P4")),      
@@ -91,6 +93,7 @@ _hub75_connectors = [
      #Subsignal("CLK", Pins("B16")),        
      #Subsignal("STB", Pins("J14")),        
      #Subsignal("OE", Pins("F12")),
+     IOStandard("LVCMOS33")
      ),
 ]
 
@@ -169,9 +172,9 @@ class BaseSoC(SoCCore):
         #self.add_csr("j1")
         self.submodules.j2 = GPIOBidirectional(platform.request("j2"))
         self.add_csr("j2")
-        self.submodules.j2 = GPIOBidirectional(platform.request("j3"))
+        self.submodules.j3 = GPIOBidirectional(platform.request("j3"))
         self.add_csr("j3")
-        self.submodules.j2 = GPIOBidirectional(platform.request("j4"))
+        self.submodules.j4 = GPIOBidirectional(platform.request("j4"))
         self.add_csr("j4")
 
         # Debug bridge ----------------------------------------------------------------------------------
