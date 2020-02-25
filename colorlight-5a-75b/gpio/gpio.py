@@ -17,6 +17,7 @@ from litex_boards.platforms import colorlight_5a_75b
 
 from litex.soc.cores.clock import *
 from litex.soc.cores.uart import UARTWishboneBridge
+from litex.soc.cores.gpio import GPIOTristate
 from litex.soc.integration.soc_core import *
 from litex.soc.integration.builder import *
 
@@ -97,37 +98,26 @@ _hub75_connectors = [
      ),
 ]
 
-_serial2 = [
-    ("serial2", 0,
-        Subsignal("rx", Pins("F12")),
-        Subsignal("tx", Pins("F3"), Misc("PULLUP=TRUE")),
-        IOStandard("LVCMOS33")
-    ),
-]
+## _serial2 = [
+##     ("serial2", 0,
+##         Subsignal("rx", Pins("F12")),
+##         Subsignal("tx", Pins("F3"), Misc("PULLUP=TRUE")),
+##         IOStandard("LVCMOS33")
+##     ),
+## ]
 _serial = [
     ("serial", 0,
-        Subsignal("rx", Pins("B16")),
-        Subsignal("tx", Pins("F1"), Misc("PULLUP=TRUE")),
+        Subsignal("rx", Pins("P4")),
+        Subsignal("tx", Pins("R2"), Misc("PULLUP=TRUE")),
         IOStandard("LVCMOS33")
     ),
 ]
 
-class GPIOBidirectional(Module, AutoCSR):
-    def __init__(self, pads):
-        pad_count = len(pads)
-        self._pins_in = CSRStatus(pad_count)
-        self._pins_out = CSRStorage(pad_count)
-        self._pins_oe = CSRStorage(pad_count)
-        gpio_pins_t = [None] * pad_count
-        bit = 0
-        for pin_group in pads.layout:
-            for pin in getattr(pads, pin_group[0]):
-                gpio_pins_t[bit] = TSTriple()
-                self.specials += gpio_pins_t[bit].get_tristate(pin)
-                self.comb += gpio_pins_t[bit].o.eq(self._pins_out.storage[bit])
-                self.comb += gpio_pins_t[bit].oe.eq(self._pins_oe.storage[bit])
-                self.comb += self._pins_in.status[bit].eq(gpio_pins_t[bit].i)
-                bit=bit+1
+_gpio = [
+    ("j2_gpio", 0,
+     Subsignal("pins", Pins("j2:0 j2:1 j2:2 j2:4 j2:5 j2:6 j2:7 j2:8 j2:9 j2:10 j2:11 j2:12 j2:13 j2:14")),
+     )
+]
 
 # CRG ----------------------------------------------------------------------------------------------
 
@@ -157,9 +147,10 @@ class BaseSoC(SoCCore):
         sys_clk_freq = int(125e6)
 
         # Extensions ----------------------------------------------------------------------------------
-        platform.add_extension(_hub75_connectors)
+#        platform.add_extension(_hub75_connectors)
         platform.add_extension(_serial)
-        platform.add_extension(_serial2)
+        platform.add_extension(_gpio)
+##        platform.add_extension(_serial2)
 
         # SoCCore ----------------------------------------------------------------------------------
         SoCCore.__init__(self, platform, clk_freq=sys_clk_freq, **kwargs, cpu_variant="standard+debug")
@@ -168,20 +159,15 @@ class BaseSoC(SoCCore):
         self.submodules.crg = _CRG(platform, sys_clk_freq)
 
         # GPIO --------------------------------------------------------------------------------------
-        #self.submodules.j1 = GPIOBidirectional(platform.request("j1"))
-        #self.add_csr("j1")
-        self.submodules.j2 = GPIOBidirectional(platform.request("j2"))
-        self.add_csr("j2")
-        self.submodules.j3 = GPIOBidirectional(platform.request("j3"))
-        self.add_csr("j3")
-        self.submodules.j4 = GPIOBidirectional(platform.request("j4"))
-        self.add_csr("j4")
+        j2_gpio_pads = platform.request("j2_gpio")
+        self.submodules.j2_gpio = GPIOTristate(j2_gpio_pads.pins)
+        self.add_csr("j2_gpio")
 
-        # Debug bridge ----------------------------------------------------------------------------------
-        # https://github.com/timvideos/litex-buildenv/wiki/LiteX-for-Hardware-Engineers#litescope-bridge
-        self.submodules.uartbridge = UARTWishboneBridge(platform.request("serial2"), int(sys_clk_freq), baudrate=115200)
-        self.add_wb_master(self.uartbridge.wishbone)
-        self.register_mem("vexriscv_debug", 0xf00f0000, self.cpu.debug_bus, 0x10)
+##         # Debug bridge ----------------------------------------------------------------------------------
+##         # https://github.com/timvideos/litex-buildenv/wiki/LiteX-for-Hardware-Engineers#litescope-bridge
+##         self.submodules.uartbridge = UARTWishboneBridge(platform.request("serial2"), int(sys_clk_freq), baudrate=115200)
+##         self.add_wb_master(self.uartbridge.wishbone)
+##         self.register_mem("vexriscv_debug", 0xf00f0000, self.cpu.debug_bus, 0x10)
 
         # Led --------------------------------------------------------------------------------------
         led_counter = Signal(32)
