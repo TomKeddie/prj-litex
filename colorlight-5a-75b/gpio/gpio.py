@@ -27,77 +27,6 @@ from liteeth.frontend.etherbone import LiteEthEtherbone
 
 from litex.build.generic_platform import Pins, IOStandard, Misc, Subsignal
 
-_hub75_connectors = [
-    ("j1", 0,
-     Subsignal("R0", Pins("F3")),               
-     Subsignal("G0", Pins("F1")),               
-     Subsignal("B0", Pins("G3")),               
-     Subsignal("R1", Pins("G2")),               
-     Subsignal("G1", Pins("H3")),               
-     Subsignal("B1", Pins("H5")),               
-     Subsignal("E", Pins("F15")),                
-     Subsignal("A", Pins("L2")),               
-     Subsignal("B", Pins("K1")),               
-     Subsignal("C", Pins("J5")),               
-     Subsignal("D", Pins("K2")),               
-     Subsignal("CLK", Pins("B16")),                
-     Subsignal("STB", Pins("J14")),                
-     Subsignal("OE", Pins("F12")),                
-     IOStandard("LVCMOS33")
-    ),
-    ("j2", 0,
-     Subsignal("R0", Pins("J4")),
-     Subsignal("G0", Pins("K3")),
-     Subsignal("B0", Pins("G1")),
-     Subsignal("R1", Pins("K4")),
-     Subsignal("G1", Pins("C2")),
-     Subsignal("B1", Pins("E3")),
-     #Subsignal("E", Pins("F15")),
-     Subsignal("A", Pins("L2")),
-     Subsignal("B", Pins("K1")),
-     #Subsignal("C", Pins("J5")),
-     #Subsignal("D", Pins("K2")),
-     #Subsignal("CLK", Pins("B16")),  
-     #Subsignal("STB", Pins("J14")),  
-     #Subsignal("OE", Pins("F12")), 
-     IOStandard("LVCMOS33")
-    ),
-    ("j3", 0,
-     Subsignal("R0", Pins("H4")),      
-     Subsignal("G0", Pins("K5")),      
-     Subsignal("B0", Pins("P1")),      
-     Subsignal("R1", Pins("R1")),      
-     Subsignal("G1", Pins("L5")),      
-     Subsignal("B1", Pins("F2")),      
-     Subsignal("E", Pins("F15")),      
-     #Subsignal("A", Pins("L2")),     
-     #Subsignal("B", Pins("K1")),     
-     Subsignal("C", Pins("J5")),     
-     Subsignal("D", Pins("K2")),     
-     #Subsignal("CLK", Pins("B16")),        
-     #Subsignal("STB", Pins("J14")),        
-     #Subsignal("OE", Pins("F12")),       
-     IOStandard("LVCMOS33")
-    ),
-    ("j4", 0,
-     Subsignal("R0", Pins("P4")),      
-     Subsignal("G0", Pins("R2")),      
-     Subsignal("B0", Pins("M8")),      
-     #Subsignal("R1", Pins("?")),     
-     Subsignal("G1", Pins("T6")),      
-     Subsignal("B1", Pins("R6")),      
-     #Subsignal("E", Pins("F15")),      
-     #Subsignal("A", Pins("L2")),     
-     #Subsignal("B", Pins("K1")),     
-     #Subsignal("C", Pins("J5")),     
-     #Subsignal("D", Pins("K2")),     
-     #Subsignal("CLK", Pins("B16")),        
-     #Subsignal("STB", Pins("J14")),        
-     #Subsignal("OE", Pins("F12")),
-     IOStandard("LVCMOS33")
-     ),
-]
-
 ## _serial2 = [
 ##     ("serial2", 0,
 ##         Subsignal("rx", Pins("F12")),
@@ -107,16 +36,21 @@ _hub75_connectors = [
 ## ]
 _serial = [
     ("serial", 0,
-        Subsignal("rx", Pins("P4")),
-        Subsignal("tx", Pins("R2"), Misc("PULLUP=TRUE")),
+        Subsignal("rx", Pins("M1")),
+        Subsignal("tx", Pins("M2"), Misc("PULLUP=TRUE")),
         IOStandard("LVCMOS33")
     ),
 ]
 
 _gpio = [
-    ("j2_gpio", 0,
-     Subsignal("pins", Pins("j2:0 j2:1 j2:2 j2:4 j2:5 j2:6 j2:7 j2:8 j2:9 j2:10 j2:11 j2:12 j2:13 j2:14")),
-     )
+    ("j1_gpio", 0, Subsignal("pins", Pins("j1:0 j1:1 j1:2 j1:4 j1:5 j1:6 j1:7 j1:8 j1:9 j1:10 j1:11 j1:12 j1:13 j1:14")), IOStandard("LVCMOS33")),
+    ("j2_gpio", 0, Subsignal("pins", Pins("j2:0 j2:1 j2:2 j2:4 j2:5 j2:6")), IOStandard("LVCMOS33")),
+    ("j3_gpio", 0, Subsignal("pins", Pins("j3:0 j3:1 j3:2 j3:4 j3:5 j3:6")), IOStandard("LVCMOS33")),
+    ("j4_gpio", 0, Subsignal("pins", Pins("j4:0 j4:1 j4:2 j4:5 j4:6")), IOStandard("LVCMOS33")),
+    ("j5_gpio", 0, Subsignal("pins", Pins("j5:0 j5:1 j5:2 j5:4 j5:5 j5:6")), IOStandard("LVCMOS33")),
+    ("j6_gpio", 0, Subsignal("pins", Pins("j6:0 j6:1 j6:2 j6:4 j6:5 j6:6")), IOStandard("LVCMOS33")),
+    ("j7_gpio", 0, Subsignal("pins", Pins("j7:0 j7:1 j7:2 j7:4 j7:5 j7:6")), IOStandard("LVCMOS33")),
+    ("j8_gpio", 0, Subsignal("pins", Pins("j8:0 j8:1 j8:2 j8:4 j8:5 j8:6")), IOStandard("LVCMOS33")),
 ]
 
 # CRG ----------------------------------------------------------------------------------------------
@@ -147,7 +81,6 @@ class BaseSoC(SoCCore):
         sys_clk_freq = int(125e6)
 
         # Extensions ----------------------------------------------------------------------------------
-#        platform.add_extension(_hub75_connectors)
         platform.add_extension(_serial)
         platform.add_extension(_gpio)
 ##        platform.add_extension(_serial2)
@@ -159,9 +92,30 @@ class BaseSoC(SoCCore):
         self.submodules.crg = _CRG(platform, sys_clk_freq)
 
         # GPIO --------------------------------------------------------------------------------------
+        j1_gpio_pads = platform.request("j1_gpio")
         j2_gpio_pads = platform.request("j2_gpio")
-        self.submodules.j2_gpio = GPIOTristate(j2_gpio_pads.pins)
+        j3_gpio_pads = platform.request("j3_gpio")
+        j4_gpio_pads = platform.request("j4_gpio")
+        j5_gpio_pads = platform.request("j5_gpio")
+        j6_gpio_pads = platform.request("j6_gpio")
+        j7_gpio_pads = platform.request("j7_gpio")
+        j8_gpio_pads = platform.request("j8_gpio")
+        self.submodules.j1_gpio = GPIOTristate(j1_gpio_pads.pins, per_pad_oe=True)
+        self.submodules.j2_gpio = GPIOTristate(j2_gpio_pads.pins, per_pad_oe=True)
+        self.submodules.j3_gpio = GPIOTristate(j3_gpio_pads.pins, per_pad_oe=True)
+        self.submodules.j4_gpio = GPIOTristate(j4_gpio_pads.pins, per_pad_oe=True)
+        self.submodules.j5_gpio = GPIOTristate(j5_gpio_pads.pins, per_pad_oe=True)
+        self.submodules.j6_gpio = GPIOTristate(j6_gpio_pads.pins, per_pad_oe=True)
+        self.submodules.j7_gpio = GPIOTristate(j7_gpio_pads.pins, per_pad_oe=True)
+        self.submodules.j8_gpio = GPIOTristate(j8_gpio_pads.pins, per_pad_oe=True)
+        self.add_csr("j1_gpio")
         self.add_csr("j2_gpio")
+        self.add_csr("j3_gpio")
+        self.add_csr("j4_gpio")
+        self.add_csr("j5_gpio")
+        self.add_csr("j6_gpio")
+        self.add_csr("j7_gpio")
+        self.add_csr("j8_gpio")
 
 ##         # Debug bridge ----------------------------------------------------------------------------------
 ##         # https://github.com/timvideos/litex-buildenv/wiki/LiteX-for-Hardware-Engineers#litescope-bridge
