@@ -40,7 +40,7 @@ _test = [
 
 #  ----------------------------------------------------------------------------------------------
 class RS232TextSender(Module):
-    def __init__(self, pads, clk_freq, text, baudrate=9600):
+    def __init__(self, pads, clk_freq, text, baudrate=115200):
 
         tuning_word = Signal(32, reset=int((baudrate/clk_freq)*2**32))
         self.source = stream.Endpoint([("data", 8)])
@@ -58,7 +58,7 @@ class RS232TextSender(Module):
         ]
 
         self.sync += [
-            If(ix == len(text_ascii),
+            If(ix == len(text),
                ix.eq(0),
             ).Elif(self.tx.sink.ready,
                ix.eq(ix+1),
@@ -88,7 +88,7 @@ class _CRG(Module):
 class BaseSoC(SoCCore):
     def __init__(self, revision, **kwargs):
         platform     = colorlight_5a_75b.Platform(revision=revision)
-        sys_clk_freq = int(6e6)
+        sys_clk_freq = int(125e6)
 
         # SoCCore ----------------------------------------------------------------------------------
         platform.add_extension(_serial)

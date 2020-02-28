@@ -11,4 +11,4 @@ litex/
 litex-boards/
 csr.csv
 migen/
-
+build/
