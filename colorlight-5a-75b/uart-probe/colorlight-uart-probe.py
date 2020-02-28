@@ -9,7 +9,6 @@
 
 import argparse
 import sys
-import math
 
 from migen import *
 from migen.genlib.resetsync import AsyncResetSynchronizer
@@ -40,31 +39,16 @@ _test = [
 
 #  ----------------------------------------------------------------------------------------------
 class RS232TextSender(Module):
-    def __init__(self, pads, clk_freq, text, baudrate=115200):
+    def __init__(self, pads, clk_freq, baudrate=115200):
 
         tuning_word = Signal(32, reset=int((baudrate/clk_freq)*2**32))
         self.source = stream.Endpoint([("data", 8)])
         self.submodules.tx = RS232PHYTX(pads, tuning_word)
-        ch = Signal(8)
-        ix = Signal(int(math.log2(len(text))+1))
-        inc = Signal
 
-        text = text + "\r\n"
-        text_ascii = Array(Constant(ord(character), bits_sign=8) for character in list(text))
-        
         self.comb += [
             self.tx.sink.valid.eq(1),
-            self.tx.sink.data.eq(text_ascii[ix]),
+            self.tx.sink.data.eq(ord('@')),
         ]
-
-        self.sync += [
-            If(ix == len(text),
-               ix.eq(0),
-            ).Elif(self.tx.sink.ready,
-               ix.eq(ix+1),
-            )
-        ]
-
 
 # CRG ----------------------------------------------------------------------------------------------
 
@@ -88,7 +72,7 @@ class _CRG(Module):
 class BaseSoC(SoCCore):
     def __init__(self, revision, **kwargs):
         platform     = colorlight_5a_75b.Platform(revision=revision)
-        sys_clk_freq = int(125e6)
+        sys_clk_freq = int(12.5e6)
 
         # SoCCore ----------------------------------------------------------------------------------
         platform.add_extension(_serial)
@@ -99,7 +83,7 @@ class BaseSoC(SoCCore):
 
         # uarts ------------------------------------------------------------------------------------
         platform.add_extension(_test)
-        self.submodules.test0 = RS232TextSender(platform.request("test"), sys_clk_freq, "F3")
+        self.submodules.test0 = RS232TextSender(platform.request("test"), sys_clk_freq)
 
 # Build --------------------------------------------------------------------------------------------
 
