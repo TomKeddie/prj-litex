@@ -1,13 +1,85 @@
-# LEDD_ADR[3:0] Name      Usage                                     Access
-#   1000        LEDDCR0   LED Driver Control Register 0               W
-#   1001        LEDDBR    LED Driver Pre-scale Register               W
-#   1010        LEDDONR   LED Driver ON Time Register                 W
-#   1011        LEDDOFR   LED Driver OFF Time Register                W
-#   0101        LEDDBCRR  LED Driver Breathe On Control Register      W
-#   0110        LEDDBCFR  LED Driver Breathe Off Control Register     W
-#   0001        LEDDPWRR  LED Driver Pulse Width Register for RED     W
-#   0010        LEDDPWRG  LED Driver Pulse Width Register for GREEN   W
-#   0011        LEDDPWRB  LED Driver Pulse Width Register for BLUE    W
+# -*- coding: utf-8 -*-
+from migen import *
+from litex.soc.interconnect import wishbone
+from litex.soc.interconnect.csr import AutoCSR, CSRStatus, CSRStorage
+
+class LED(Module, AutoCSR):
+    def __init__(self, pads):
+
+        self.dat = CSRStorage(8)
+        self.addr = CSRStorage(4)
+        self.ctrl = CSRStorage(len(pads))
+        self.raw = CSRStorage(len(pads))
+        self.mux = CSRStorage(len(pads))
+
+        LEDDCR0  = Signal(8)
+        LEDDBR   = Signal(8)
+        LEDDONR  = Signal(8)
+        LEDDOFR  = Signal(8)
+        LEDDBCRR = Signal(8)
+        LEDDBCFR = Signal(8)
+        LEDDPWRR = Signal(8)
+        LEDDPWRG = Signal(8)
+        LEDDPWRB = Signal(8)
+        
+        # LEDD_ADR[3:0] Name      Usage                                     Access
+        #   1000        LEDDCR0   LED Driver Control Register 0               W
+        #   1001        LEDDBR    LED Driver Pre-scale Register               W
+        #   1010        LEDDONR   LED Driver ON Time Register                 W
+        #   1011        LEDDOFR   LED Driver OFF Time Register                W
+        #   0101        LEDDBCRR  LED Driver Breathe On Control Register      W
+        #   0110        LEDDBCFR  LED Driver Breathe Off Control Register     W
+        #   0001        LEDDPWRR  LED Driver Pulse Width Register for RED     W
+        #   0010        LEDDPWRG  LED Driver Pulse Width Register for GREEN   W
+        #   0011        LEDDPWRB  LED Driver Pulse Width Register for BLUE    W
+
+        self.sync += [If(self.addr.storage == 0b1000 & self.dat.re, LEDDCR0.eq(self.dat.storage)),
+                      If(self.addr.storage == 0b1001 & self.dat.re, LEDDBR.eq(self.dat.storage)),
+                      If(self.addr.storage == 0b1010 & self.dat.re, LEDDONR.eq(self.dat.storage)),
+                      If(self.addr.storage == 0b1011 & self.dat.re, LEDDOFR.eq(self.dat.storage)),
+                      If(self.addr.storage == 0b0101 & self.dat.re, LEDDBCRR.eq(self.dat.storage)),
+                      If(self.addr.storage == 0b0110 & self.dat.re, LEDDBCFR.eq(self.dat.storage)),
+                      If(self.addr.storage == 0b0001 & self.dat.re, LEDDPWRR.eq(self.dat.storage)),
+                      If(self.addr.storage == 0b0010 & self.dat.re, LEDDPWRG.eq(self.dat.storage)),
+                      If(self.addr.storage == 0b0011 & self.dat.re, LEDDPWRB.eq(self.dat.storage)),
+        ]
+
+        # =====================================================================
+        # LED Driver Control Register 0 (LEDDCR0)
+        # LEDDCR0 can be written through LED Control Bus. 
+        # Bit7   Bit6  Bit5   Bit4    Bit3       Bit2    Bit1/Bit0
+        # LEDDEN FR250 OUTPOL OUTSKEW QUICKSTOP  PWMMODE BRMSBEXT
+        
+        pwm_out = Signal(len(pads))
+
+        # 7 LEDDEN LED Driver Enable Bit — This bit enables the LED Driver. If
+        # LEDDEN is cleared, The LED Driver is disabled and the system clock
+        # into the LED Driver block will be gated off.
+        #  0 = LED Driver disabled
+        #  1 = LED Driver enabled
+        enable = Signal()
+        self.comb += [enable.eq(self.ctrl.storage[1] & self.ctrl.storage[2] & LEDDCR0[7])]
+
+        for ix in range(0, len(pads)):
+            wire = Signal()
+            # mux in/out raw values
+            self.comb += [If(self.mux.storage[ix], pads[ix].eq(self.raw.storage[ix])).Else(pads[ix].eq(wire))]
+            # LEDDCR0[5] OUTPOL PWM Outputs Polarity Select Bit — This bit selects the PWM
+            # outputs polarity.
+            #  0 = Active High
+            #  1 = Active Low
+            self.comb += [If(enable, wire.eq(pwm_out[ix])).Else(wire.eq(LEDDCR0[5]))]
+
+        # =====================================================================
+        # LED Driver Clock Pre-scale Register (LEDDBR)
+        # LEDDBR can be written through LED Control Bus. It will combine the
+        # LEDDCR0 [1:0] as MSB to form a 10 bits binary number to generate
+        # time period equivalent to 64 kHz. From here, 125 Hz or 250 Hz
+        # refresh rate will be generated depends on the LEDDCR0 [6] selection.
+        # Register Value N = Fsys/64 kHz - 1
+        
+        counter = Signal(12)
+        self.sync += [If(enable, If(counter == 0, counter.eq(Cat(LEDDBR, LEDDCR0[0:2]))).Else(counter.eq(counter-1)))]
 
 # =====================================================================
 # LED Driver Control Register 0 (LEDDCR0)
@@ -17,21 +89,12 @@
 # 
 # Bit Field Description
 #
-# 7 LEDDEN LED Driver Enable Bit — This bit enables the LED Driver. If
-# LEDDEN is cleared, The LED Driver is disabled and the system clock
-# into the LED Driver block will be gated off.
-#  0 = LED Driver disabled
-#  1 = LED Driver enabled
 #
 # 6 FR250 Flick Rate Select Bit — This bit selects the flick rate for
 # the PWM logic between 125 Hz and 250Hz
 #  0 = 125Hz
 #  1 = 250Hz
 #
-# 5 OUTPOL PWM Outputs Polarity Select Bit — This bit selects the PWM
-# outputs polarity.
-#  0 = Active High
-#  1 = Active Low
 #
 # 4 OUTSKEW PWM Output Skew Enable Bit — This bit enables the PWM slew
 # to reduce simultaneous switching noise, based on BRMSBEXT [1:0]
@@ -54,14 +117,6 @@
 # 1:0 BRMSBEXT These two bits will serve as MSB of the Pre-scale
 # Register to extend functional system clock frequency range.
 #
-
-# =====================================================================
-# LED Driver Clock Pre-scale Register (LEDDBR)
-# LEDDBR can be written through LED Control Bus. It will combine the
-# LEDDCR0 [1:0] as MSB to form a 10 bits binary number to generate
-# time period equivalent to 64 kHz. From here, 125 Hz or 250 Hz
-# refresh rate will be generated depends on the LEDDCR0 [6] selection.
-# Register Value N = Fsys/64 kHz - 1
 
 # =====================================================================
 # LED Driver ON Time Register (LEDDONR)
