@@ -13,9 +13,9 @@ all: bios.bin
 %.bin: %.elf
 	$(OBJCOPY) -O binary $< $@
 ifeq ($(CPUENDIANNESS),little)
-	$(PYTHON) -m litex.soc.tools.mkmscimg $@ --little
+	$(PYTHON) -m litex.soc.software.mkmscimg $@ --little
 else
-	$(PYTHON) -m litex.soc.tools.mkmscimg $@
+	$(PYTHON) -m litex.soc.software.mkmscimg $@
 endif
 
 bios.elf: $(BIOS_DIRECTORY)/linker.ld $(OBJECTS)
